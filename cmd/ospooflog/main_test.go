@@ -131,6 +131,136 @@ func TestRoundTrip_StrictMode(t *testing.T) {
 	}
 }
 
+func TestShow_PrintsMapping(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	showFile := filepath.Join(dir, "show.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	if err := os.WriteFile(logFile, []byte("user=alice from 10.1.2.3"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-o", showFile, "-s", sessionFile, "show"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(showFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	for _, want := range []string{"TOKEN", "KIND", "ORIGIN", "REPLACE", "alice", "user1", "10.1.2.3", "192.168.1.1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("show output missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestShow_EmptySession(t *testing.T) {
+	dir := t.TempDir()
+	showFile := filepath.Join(dir, "show.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	if err := run([]string{"-o", showFile, "-s", sessionFile, "show"}); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(showFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "(session is empty)") {
+		t.Errorf("expected empty marker: %s", out)
+	}
+}
+
+func TestDryRun_PrintsMatchesAndDoesNotMutate(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	dryFile := filepath.Join(dir, "dry.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	if err := os.WriteFile(logFile, []byte("user=alice from 10.1.2.3"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", dryFile, "-s", sessionFile, "--dry-run", "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+
+	dry, err := os.ReadFile(dryFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(dry)
+	for _, want := range []string{"OFFSET", "KIND", "VALUE", "USER", "alice", "IP", "10.1.2.3"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("dry-run output missing %q:\n%s", want, got)
+		}
+	}
+
+	// Session file must NOT have been written.
+	if _, err := os.Stat(sessionFile); !os.IsNotExist(err) {
+		t.Errorf("dry-run created a session file (err=%v)", err)
+	}
+}
+
+func TestOverrides_CustomReplaceWins(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	resultFile := filepath.Join(dir, "result.txt")
+	aiFile := filepath.Join(dir, "ai.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+	overridesFile := filepath.Join(dir, "overrides.yaml")
+
+	if err := os.WriteFile(overridesFile, []byte(`overrides:
+  - origin: alice
+    replace: john
+  - origin: 10.1.2.3
+    replace: 172.16.0.5
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logFile, []byte("user=alice from 10.1.2.3 plus 10.4.5.6"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--overrides", overridesFile, "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safeStr := string(safe)
+	for _, want := range []string{"john", "172.16.0.5"} {
+		if !strings.Contains(safeStr, want) {
+			t.Errorf("override missing in obfuscate output: want %q in\n%s", want, safeStr)
+		}
+	}
+	// Non-overridden origin still uses template.
+	if !strings.Contains(safeStr, "192.168.1.") {
+		t.Errorf("template-derived replacement missing for non-overridden IP:\n%s", safeStr)
+	}
+
+	// Round-trip with overrides — restore must map "john" back to "alice".
+	if err := os.WriteFile(aiFile, []byte("Tell john at 172.16.0.5 to retry"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", aiFile, "-o", resultFile, "-s", sessionFile, "restore"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := os.ReadFile(resultFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Tell alice at 10.1.2.3 to retry"
+	if string(result) != want {
+		t.Errorf("override round-trip:\n got %q\nwant %q", result, want)
+	}
+}
+
 func TestObfuscate_AppendsToExistingSession(t *testing.T) {
 	dir := t.TempDir()
 	sessionFile := filepath.Join(dir, "s.json")

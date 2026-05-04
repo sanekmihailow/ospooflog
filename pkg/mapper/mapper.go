@@ -28,6 +28,7 @@ type Mapper struct {
 	byReplace map[string]*Entry
 	counters  map[detector.EntityKind]int
 	replacer  *replacer.Replacer
+	overrides map[string]string
 }
 
 func New(r *replacer.Replacer) *Mapper {
@@ -43,6 +44,8 @@ func New(r *replacer.Replacer) *Mapper {
 // Obfuscate returns the (token, replace) pair for origin. On first sight of
 // origin a new entry is created using the per-kind counter; on subsequent
 // calls the cached pair is returned, guaranteeing stability across the run.
+// If a user-supplied override exists for origin, the override's replace
+// value wins over the built-in template.
 func (m *Mapper) Obfuscate(origin string, kind detector.EntityKind, extra map[string]string) (token, replace string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -52,7 +55,11 @@ func (m *Mapper) Obfuscate(origin string, kind detector.EntityKind, extra map[st
 	m.counters[kind]++
 	n := m.counters[kind]
 	token = fmt.Sprintf("%s_%03d", kind, n)
-	replace = m.replacer.Generate(kind, n, extra)
+	if r, ok := m.overrides[origin]; ok && r != "" {
+		replace = r
+	} else {
+		replace = m.replacer.Generate(kind, n, extra)
+	}
 	e := &Entry{
 		Token:   token,
 		Kind:    kind,
@@ -64,6 +71,15 @@ func (m *Mapper) Obfuscate(origin string, kind detector.EntityKind, extra map[st
 	m.byToken[token] = e
 	m.byReplace[replace] = e
 	return token, replace
+}
+
+// SetOverrides installs a fixed origin→replace map. Overrides only apply
+// on first sighting of an origin; entries already in the registry (e.g.
+// loaded from a prior session) keep their existing replace value.
+func (m *Mapper) SetOverrides(o map[string]string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.overrides = o
 }
 
 // Restore looks up the original value by replace value. ok=false if the

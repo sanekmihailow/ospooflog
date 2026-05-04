@@ -72,6 +72,34 @@ func TestLoad_PreservesByReplaceLookup(t *testing.T) {
 	}
 }
 
+func TestSetOverrides_NewOriginUsesOverride(t *testing.T) {
+	m := New(replacer.New())
+	m.SetOverrides(map[string]string{"alice": "john"})
+	_, r := m.Obfuscate("alice", detector.KindUser, nil)
+	if r != "john" {
+		t.Errorf("override ignored: got %q want %q", r, "john")
+	}
+}
+
+func TestSetOverrides_FallbackToTemplate(t *testing.T) {
+	m := New(replacer.New())
+	m.SetOverrides(map[string]string{"alice": "john"})
+	_, r := m.Obfuscate("bob", detector.KindUser, nil)
+	if r != "user1" {
+		t.Errorf("non-overridden origin should use template: got %q", r)
+	}
+}
+
+func TestSetOverrides_DoesNotOverwriteExisting(t *testing.T) {
+	m := New(replacer.New())
+	_, r1 := m.Obfuscate("alice", detector.KindUser, nil) // user1
+	m.SetOverrides(map[string]string{"alice": "john"})
+	_, r2 := m.Obfuscate("alice", detector.KindUser, nil)
+	if r1 != "user1" || r2 != "user1" {
+		t.Errorf("post-hoc override should not change existing entry: %q -> %q", r1, r2)
+	}
+}
+
 func TestObfuscate_ConcurrentSafe(t *testing.T) {
 	m := New(replacer.New())
 	var wg sync.WaitGroup
