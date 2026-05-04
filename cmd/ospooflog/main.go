@@ -10,12 +10,14 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"text/tabwriter"
 
 	flags "github.com/jessevdk/go-flags"
 	"gopkg.in/yaml.v3"
 
 	"github.com/sanekmihailow/ospooflog/pkg/detector"
+	"github.com/sanekmihailow/ospooflog/pkg/jsonproc"
 	"github.com/sanekmihailow/ospooflog/pkg/mapper"
 	"github.com/sanekmihailow/ospooflog/pkg/obfuscator"
 	"github.com/sanekmihailow/ospooflog/pkg/replacer"
@@ -31,6 +33,8 @@ type opts struct {
 	StrictRestore bool   `long:"strict-restore" description:"word-boundary aware restore (slower, immune to substring traps)"`
 	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or session"`
 	Overrides     string `long:"overrides" description:"YAML file with custom origin→replace pairs"`
+	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON and obfuscate string leaves (NDJSON)"`
+	AllowKeys     string `long:"allow-keys" description:"comma-separated JSON keys to skip in --json mode (e.g. level,timestamp,msg)"`
 	Dbg           bool   `long:"dbg" description:"debug logging on stderr"`
 
 	Obfuscate struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes"`
@@ -111,7 +115,13 @@ func runObfuscate(o opts, m *mapper.Mapper) error {
 		return printMatches(out, chain.Find(text))
 	}
 
-	result := obfuscator.New(chain, m).Obfuscate(text)
+	obf := obfuscator.New(chain, m)
+	var result string
+	if o.JSON {
+		result = jsonproc.New(obf, m, splitCSV(o.AllowKeys)).Process(text)
+	} else {
+		result = obf.Obfuscate(text)
+	}
 	if _, err := out.Write([]byte(result)); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
@@ -203,6 +213,20 @@ func loadOverrides(path string) (map[string]string, error) {
 		out[r.Origin] = r.Replace
 	}
 	return out, nil
+}
+
+func splitCSV(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func readInput(path string) (string, error) {

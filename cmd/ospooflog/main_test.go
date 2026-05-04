@@ -261,6 +261,95 @@ func TestOverrides_CustomReplaceWins(t *testing.T) {
 	}
 }
 
+func TestJSON_NDJSONRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.json")
+	safeFile := filepath.Join(dir, "safe.json")
+	aiFile := filepath.Join(dir, "ai.txt")
+	resultFile := filepath.Join(dir, "result.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	rawLog := `{"level":"error","time":"2026-05-03T19:00:01Z","user":"alice","ip":"10.1.2.3","msg":"connect from 10.1.2.3"}
+{"level":"info","time":"2026-05-03T19:00:02Z","user":"bob","ip":"10.4.5.6","msg":"login ok"}
+`
+	if err := os.WriteFile(logFile, []byte(rawLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--json", "--allow-keys", "level,time", "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safeStr := string(safe)
+
+	// allow-keys preserved verbatim.
+	if !strings.Contains(safeStr, `"level":"error"`) {
+		t.Errorf("allow-key level changed: %s", safeStr)
+	}
+	if !strings.Contains(safeStr, `"time":"2026-05-03T19:00:01Z"`) {
+		t.Errorf("allow-key time changed: %s", safeStr)
+	}
+
+	// Sensitive fields obfuscated.
+	for _, leaked := range []string{"alice", "bob", "10.1.2.3", "10.4.5.6"} {
+		if strings.Contains(safeStr, leaked) {
+			t.Errorf("origin %q leaked: %s", leaked, safeStr)
+		}
+	}
+	for _, want := range []string{`"user":"user1"`, `"user":"user2"`, `"ip":"192.168.1.1"`, `"ip":"192.168.1.2"`} {
+		if !strings.Contains(safeStr, want) {
+			t.Errorf("missing %q in safe output: %s", want, safeStr)
+		}
+	}
+
+	// Restore round-trip — AI response references the fakes, restore yields originals.
+	aiText := "Action items: ask user1 (192.168.1.1) and user2 (192.168.1.2) to retry."
+	if err := os.WriteFile(aiFile, []byte(aiText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", aiFile, "-o", resultFile, "-s", sessionFile, "restore"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := os.ReadFile(resultFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "Action items: ask alice (10.1.2.3) and bob (10.4.5.6) to retry."
+	if string(result) != want {
+		t.Errorf("round-trip:\n got %q\nwant %q", result, want)
+	}
+}
+
+func TestJSON_KubernetesPrefixFallsBackToPlain(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	// k8s CRI prefix — line is not pure JSON, falls back to plain obfuscation.
+	rawLog := `2026-05-03T19:00:01Z stdout F connection from 10.1.2.3 user=alice` + "\n"
+	if err := os.WriteFile(logFile, []byte(rawLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--json", "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(safe)
+	if strings.Contains(got, "10.1.2.3") || strings.Contains(got, "alice") {
+		t.Errorf("k8s-prefix fallback didn't obfuscate: %s", got)
+	}
+	if !strings.Contains(got, "192.168.1.1") || !strings.Contains(got, "user1") {
+		t.Errorf("k8s-prefix fallback missing replacements: %s", got)
+	}
+}
+
 func TestObfuscate_AppendsToExistingSession(t *testing.T) {
 	dir := t.TempDir()
 	sessionFile := filepath.Join(dir, "s.json")
