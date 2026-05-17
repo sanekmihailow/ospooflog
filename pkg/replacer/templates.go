@@ -62,6 +62,9 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 	detector.KindPassword: func(n int, _ map[string]string) string {
 		return fmt.Sprintf("FAKE_PASSWORD_%03d", n)
 	},
+	detector.KindAPIKey: func(n int, _ map[string]string) string {
+		return fmt.Sprintf("FAKE_API_KEY_%03d", n)
+	},
 	detector.KindFingerprint: func(n int, _ map[string]string) string {
 		// Shape-preserving fake: 43-char base64-ish blob after "SHA256:".
 		body := strings.Repeat("0", 39)

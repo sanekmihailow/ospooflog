@@ -32,6 +32,9 @@ const (
 	// KindPassword covers plaintext passwords from "IDENTIFIED BY '…'",
 	// "password=…", "passwd: …", "pwd=…" patterns.
 	KindPassword EntityKind = "PWD"
+	// KindAPIKey covers API keys, bearer tokens, and provider-specific
+	// credentials (AWS AKIA, GitHub gh*_, etc).
+	KindAPIKey EntityKind = "APIKEY"
 	// KindFingerprint covers SHA256/MD5 SSH key fingerprints.
 	KindFingerprint EntityKind = "FP"
 	// KindPubKey covers ssh-rsa / ssh-ed25519 / ecdsa-sha2-* public key bodies.

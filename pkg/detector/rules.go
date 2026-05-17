@@ -98,6 +98,21 @@ var (
 	// too ambiguous (mysql -p, ssh -p PORT) to use unconditionally.
 	rePasswordFlag = regexp.MustCompile(`(?i)\B--(?:password|passwd|pwd)[= ]['"]?([^'"\s]+)`)
 
+	// Bearer token in Authorization header. Matches "Authorization: Bearer X"
+	// and bare "Bearer X". The token charset covers JWT (.) and opaque
+	// base64/URL-safe forms.
+	reBearerToken = regexp.MustCompile(`(?i)(?:Authorization:\s*)?Bearer\s+([A-Za-z0-9._~+/=\-]{16,})`)
+	// Generic API-key assignment: api_key, apikey, api-key, x-api-key, etc.
+	reAPIKeyAssign = regexp.MustCompile(`(?i)\b(?:x[-_]?)?api[-_]?key\s*[=:]\s*['"]?([A-Za-z0-9._~+/=\-]{12,})`)
+	// AWS access key IDs. AKIA = long-lived, ASIA = STS session, AROA/AGPA/
+	// AIPA/ANPA/ANVA/AIDA = other entity types. Always 20 chars total.
+	reAWSAccessKey = regexp.MustCompile(`\b(?:AKIA|ASIA|AROA|AGPA|AIPA|ANPA|ANVA|AIDA)[A-Z0-9]{16}\b`)
+	// GitHub tokens: ghp_ (PAT), gho_ (OAuth), ghu_ (user-to-server),
+	// ghs_ (server-to-server), ghr_ (refresh).
+	reGitHubToken = regexp.MustCompile(`\bgh[posur]_[A-Za-z0-9]{36,}\b`)
+	// Slack tokens: xox[abprs]-… (bot/app/user/refresh/legacy).
+	reSlackToken = regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`)
+
 	// MySQL GRANT-style 'user'@'host'. We mask only the user half — host
 	// is usually 'localhost' / '%' / an IP that other rules already cover.
 	reMySQLUserAt = regexp.MustCompile(`'([a-zA-Z_][a-zA-Z0-9_-]*)'@'[^']+'`)
@@ -237,8 +252,15 @@ func DefaultRules() []Rule {
 		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1},
 		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1},
 		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1},
-		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
+		// JWT before the generic Bearer rule so a JWT-shaped token stays
+		// tagged as TOKEN instead of being relabelled as a generic API key.
 		{Kind: KindToken, Re: reJWT},
+		{Kind: KindAPIKey, Re: reAWSAccessKey},
+		{Kind: KindAPIKey, Re: reGitHubToken},
+		{Kind: KindAPIKey, Re: reSlackToken},
+		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1},
+		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
+		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
@@ -269,8 +291,15 @@ func AggressiveRules() []Rule {
 		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1},
 		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1},
 		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1},
-		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
+		// JWT before the generic Bearer rule so a JWT-shaped token stays
+		// tagged as TOKEN instead of being relabelled as a generic API key.
 		{Kind: KindToken, Re: reJWT},
+		{Kind: KindAPIKey, Re: reAWSAccessKey},
+		{Kind: KindAPIKey, Re: reGitHubToken},
+		{Kind: KindAPIKey, Re: reSlackToken},
+		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1},
+		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
+		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
