@@ -141,6 +141,33 @@ func validEmail(s string) bool {
 	return !reSSHAlgLocalPart.MatchString(s[:at])
 }
 
+// userStopWords are common English words and OS names that get captured by
+// "for X" / "as X" / "user: X" patterns but are never actual usernames.
+// Lowercased; lookup is case-insensitive.
+var userStopWords = map[string]bool{
+	// English words that follow "as" / "for"
+	"needed": true, "expected": true, "example": true, "instance": true,
+	"now": true, "soon": true, "well": true, "long": true, "part": true,
+	"me": true, "us": true, "you": true, "it": true, "them": true,
+	"the": true, "a": true, "an": true, "this": true, "that": true,
+	"running": true, "started": true, "stopped": true, "failed": true,
+	"done": true, "complete": true, "all": true, "any": true, "some": true,
+	// Tokens after "user:" that are field names, not usernames
+	"name": true, "id": true, "uid": true, "gid": true,
+	// OS / distro names that get caught by "for <name>"
+	"ubuntu": true, "debian": true, "fedora": true, "centos": true,
+	"alpine": true, "linux": true, "windows": true, "macos": true,
+	"darwin": true, "redhat": true, "rhel": true, "arch": true,
+}
+
+// validUser rejects USER captures that are clearly English stop-words or
+// OS names rather than account names. Lowercase compare so "Ubuntu" and
+// "ubuntu" both get filtered. Real account names like "root", "system",
+// or any digits/underscores form (user1, vtiger_user) are unaffected.
+func validUser(s string) bool {
+	return !userStopWords[strings.ToLower(s)]
+}
+
 // validSyslogHost rejects tokens that look syslog-positional but are
 // actually CRI container-log stream markers ("<ts> stderr F …" /
 // "<ts> stdout F …"). Avoids masking those as hostnames.
@@ -260,7 +287,7 @@ func DefaultRules() []Rule {
 		{Kind: KindAPIKey, Re: reSlackToken},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
-		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
+		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
@@ -272,7 +299,7 @@ func DefaultRules() []Rule {
 		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
 		{Kind: KindHost, Re: reHostConservative},
 		{Kind: KindFQDN, Re: reFQDN},
-		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1},
+		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
 	}
 }
@@ -299,7 +326,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindAPIKey, Re: reSlackToken},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
-		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
+		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
@@ -310,8 +337,8 @@ func AggressiveRules() []Rule {
 		{Kind: KindHost, Re: reHostConservative},
 		{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1},
 		{Kind: KindFQDN, Re: reFQDN},
-		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1},
-		{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1},
+		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
 		{Kind: KindPath, Re: rePathAggressive, CaptureGroup: 1},
 		{Kind: KindPort, Re: rePort, CaptureGroup: 1},
