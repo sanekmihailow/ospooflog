@@ -20,6 +20,13 @@ var (
 	// mid-word false matches.
 	reIP6 = regexp.MustCompile(`(?:^|[^A-Fa-f0-9:])((?:[A-Fa-f0-9]{0,4}:){2,7}[A-Fa-f0-9]{0,4}(?:%[A-Za-z0-9]+)?)(?:$|[^A-Fa-f0-9:])`)
 
+	// HOST syslog — hostname token right after a syslog timestamp at start of
+	// line. Covers both ISO 8601 ("2026-03-16T04:40:00.267616+00:00 host …")
+	// and legacy BSD ("Mar 16 09:09:12 host …") forms. (?m) anchors ^ at
+	// each line. Captures the hostname; the trailing whitespace + non-space
+	// process word is required so we don't snag the next token in oddly
+	// formatted lines.
+	reHostSyslog = regexp.MustCompile(`(?m)^(?:\d{4}-\d{2}-\d{2}T[\d:.+\-Z]+|[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+([a-zA-Z][a-zA-Z0-9._-]+)\s+\S+`)
 	// HOST conservative — must end in a private/internal-looking suffix.
 	reHostConservative = regexp.MustCompile(`\b[a-zA-Z0-9][a-zA-Z0-9-]*\.(?:local|internal|lan|home)\b`)
 	// HOST aggressive — single-label hostname with a hyphen, only after a
@@ -35,8 +42,10 @@ var (
 	// port half of an "ip:port" pair (which is already eaten by ADDR anyway).
 	rePort = regexp.MustCompile(`(?:^|[^a-zA-Z0-9_.\-])(:\d{2,5})\b`)
 
-	// USER conservative — explicit "user=" / "login=" / "username:" context.
-	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name)?|login)\s*[=:]\s*([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
+	// USER conservative — explicit "user=" / "login=" / "username:" / "acct="
+	// context. "acct" picks up auditd / PAM records like acct="root". The
+	// optional quote after "=" lets the capture cross past quoted values.
+	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name)?|login|acct)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
 	// USER aggressive — also "as <name>" / "for <name>". Lots of false-positive
 	// risk ("as needed", "for example").
 	reUserAggressive = regexp.MustCompile(`(?i)\b(?:as|for)\s+([a-zA-Z][a-zA-Z0-9._-]{1,30})\b`)
@@ -109,6 +118,17 @@ func validEmail(s string) bool {
 		return false
 	}
 	return !reSSHAlgLocalPart.MatchString(s[:at])
+}
+
+// validSyslogHost rejects tokens that look syslog-positional but are
+// actually CRI container-log stream markers ("<ts> stderr F …" /
+// "<ts> stdout F …"). Avoids masking those as hostnames.
+func validSyslogHost(s string) bool {
+	switch s {
+	case "stderr", "stdout":
+		return false
+	}
+	return true
 }
 
 func addrExtra(sub []string) map[string]string {
@@ -196,6 +216,7 @@ func DefaultRules() []Rule {
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
 		// HOST before FQDN so .local/.internal names get the "host" treatment
 		// instead of being relabelled as a generic FQDN.
+		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
 		{Kind: KindHost, Re: reHostConservative},
 		{Kind: KindFQDN, Re: reFQDN},
 		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1},
@@ -223,6 +244,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
+		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
 		{Kind: KindHost, Re: reHostConservative},
 		{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1},
 		{Kind: KindFQDN, Re: reFQDN},
