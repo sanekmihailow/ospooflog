@@ -28,6 +28,9 @@ const (
 	KindPort  EntityKind = "PORT"
 	KindUser  EntityKind = "USER"
 	KindPath  EntityKind = "PATH"
+	// KindPassword covers plaintext passwords from "IDENTIFIED BY '…'",
+	// "password=…", "passwd: …", "pwd=…" patterns.
+	KindPassword EntityKind = "PWD"
 	// KindFingerprint covers SHA256/MD5 SSH key fingerprints.
 	KindFingerprint EntityKind = "FP"
 	// KindPubKey covers ssh-rsa / ssh-ed25519 / ecdsa-sha2-* public key bodies.

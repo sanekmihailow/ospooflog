@@ -75,6 +75,18 @@ var (
 	// whole token is held verbatim — keeps email and FQDN rules off.
 	reSSHAlgIdent = regexp.MustCompile(`\S+@(?:openssh\.com|libssh\.org)\b`)
 
+	// SQL plaintext password: "IDENTIFIED BY 'secret'" / `BY "secret"`.
+	reSQLIdentifiedBy = regexp.MustCompile(`(?i)IDENTIFIED\s+BY\s+['"]([^'"]+)['"]`)
+	// Generic password assignment: password=..., passwd: ..., pwd = "...".
+	// Captures up to the next quote/whitespace/comma/semicolon — covers
+	// quoted and bare forms. The leading \b prevents matching tail-tokens
+	// like "vtiger_password".
+	rePasswordAssign = regexp.MustCompile(`(?i)\b(?:password|passwd|pwd)\s*[=:]\s*['"]?([^'"\s,;]+)`)
+
+	// MySQL GRANT-style 'user'@'host'. We mask only the user half — host
+	// is usually 'localhost' / '%' / an IP that other rules already cover.
+	reMySQLUserAt = regexp.MustCompile(`'([a-zA-Z_][a-zA-Z0-9_-]*)'@'[^']+'`)
+
 	// SSH/TLS algorithm-name local-parts that masquerade as email addresses
 	// (e.g. "rsa-sha2-512-cert-v01@openssh.com",
 	// "sk-ecdsa-sha2-nistp256@openssh.com"). Used by validEmail to reject
@@ -173,6 +185,9 @@ func DefaultRules() []Rule {
 		{Kind: KindPubKey, Re: reSSHPubKeyBare},
 		{Kind: KindFingerprint, Re: reSHA256FP},
 		{Kind: KindFingerprint, Re: reMD5FP},
+		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1},
+		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1},
+		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
@@ -199,6 +214,9 @@ func AggressiveRules() []Rule {
 		{Kind: KindPubKey, Re: reSSHPubKeyBare},
 		{Kind: KindFingerprint, Re: reSHA256FP},
 		{Kind: KindFingerprint, Re: reMD5FP},
+		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1},
+		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1},
+		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
