@@ -45,6 +45,29 @@ var (
 	rePathConservative = regexp.MustCompile(`(/(?:var|etc|home|opt|usr|tmp|mnt|srv|root)(?:/[A-Za-z0-9._-]+)+)`)
 	// PATH aggressive — any 2+ segment absolute path starting with a letter.
 	rePathAggressive = regexp.MustCompile(`(/[a-zA-Z][A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+){1,})`)
+
+	// PEM private key block. (?s) so "." crosses newlines. The label part
+	// "[A-Z0-9 ]*PRIVATE KEY" covers OPENSSH/RSA/EC/DSA/PRIVATE variants.
+	rePEMPrivate = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`)
+
+	// SSH public key body: algorithm prefix + whitespace + long base64 blob.
+	// The {40,} floor avoids snagging algorithm-name lists like
+	// "ssh-rsa,ssh-ed25519" where there's no real key payload after.
+	reSSHPubKey = regexp.MustCompile(`\b(?:ssh-rsa|ssh-dss|ssh-ed25519|ecdsa-sha2-[a-z0-9-]+)\s+[A-Za-z0-9+/]{40,}={0,3}`)
+
+	// SSH wire-format base64 blob without algorithm prefix (e.g. sshd debug
+	// "advance: '<blob>'" continuations). Every real SSH public key starts
+	// with "AAAA" — that's the encoded 32-bit length of the first string
+	// field, always 7/11/19/etc. The 60-char floor avoids random ALL-CAPS
+	// tokens of length 4 that happen to begin with AAAA.
+	reSSHPubKeyBare = regexp.MustCompile(`\bAAAA[A-Za-z0-9+/]{60,}={0,3}`)
+
+	// SHA256 SSH fingerprint — accepts both OpenSSH-style base64-43
+	// ("SHA256:gIIV9aBJ...") and hex-64 ("SHA256:4783cf01..."). One rule
+	// covers both since the char class is a superset.
+	reSHA256FP = regexp.MustCompile(`\bSHA256:[A-Za-z0-9+/]{40,}={0,2}`)
+	// MD5 SSH fingerprint — 16 hex pairs separated by colons.
+	reMD5FP = regexp.MustCompile(`\bMD5:(?:[0-9a-fA-F]{2}:){15}[0-9a-fA-F]{2}\b`)
 )
 
 func addrExtra(sub []string) map[string]string {
@@ -111,7 +134,14 @@ func dsnExtra(sub []string) map[string]string {
 // Order is priority — first rule wins at any given byte range.
 func DefaultRules() []Rule {
 	return []Rule{
+		// PRIVKEY first — it spans newlines and embeds base64 that would
+		// otherwise be shredded by IP/UUID/etc.
+		{Kind: KindPrivKey, Re: rePEMPrivate},
 		{Kind: KindDSN, Re: reDSN, ExtraFn: dsnExtra},
+		{Kind: KindPubKey, Re: reSSHPubKey},
+		{Kind: KindPubKey, Re: reSSHPubKeyBare},
+		{Kind: KindFingerprint, Re: reSHA256FP},
+		{Kind: KindFingerprint, Re: reMD5FP},
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail},
@@ -131,7 +161,12 @@ func DefaultRules() []Rule {
 // more false positives. Enabled via --aggressive.
 func AggressiveRules() []Rule {
 	return []Rule{
+		{Kind: KindPrivKey, Re: rePEMPrivate},
 		{Kind: KindDSN, Re: reDSN, ExtraFn: dsnExtra},
+		{Kind: KindPubKey, Re: reSSHPubKey},
+		{Kind: KindPubKey, Re: reSSHPubKeyBare},
+		{Kind: KindFingerprint, Re: reSHA256FP},
+		{Kind: KindFingerprint, Re: reMD5FP},
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail},

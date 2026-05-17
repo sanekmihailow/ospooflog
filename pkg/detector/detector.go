@@ -28,6 +28,12 @@ const (
 	KindPort  EntityKind = "PORT"
 	KindUser  EntityKind = "USER"
 	KindPath  EntityKind = "PATH"
+	// KindFingerprint covers SHA256/MD5 SSH key fingerprints.
+	KindFingerprint EntityKind = "FP"
+	// KindPubKey covers ssh-rsa / ssh-ed25519 / ecdsa-sha2-* public key bodies.
+	KindPubKey EntityKind = "PUBKEY"
+	// KindPrivKey covers PEM-armored private key blocks.
+	KindPrivKey EntityKind = "PRIVKEY"
 	// KindOverride tags pairs from --overrides applied as literal sed-style
 	// substitutions, independent of any detector rule.
 	KindOverride EntityKind = "OVR"

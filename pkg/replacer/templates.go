@@ -2,6 +2,7 @@ package replacer
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/sanekmihailow/ospooflog/pkg/detector"
 )
@@ -52,6 +53,17 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 		// payload is meaningless, signature is "fakesigNNNN" so it stays
 		// recognisable as a fake.
 		return fmt.Sprintf("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyJWQifQ.fakesig%04d", n)
+	},
+	detector.KindFingerprint: func(n int, _ map[string]string) string {
+		// Shape-preserving fake: 43-char base64-ish blob after "SHA256:".
+		body := strings.Repeat("0", 39)
+		return fmt.Sprintf("SHA256:%s%04d", body, n)
+	},
+	detector.KindPubKey: func(n int, _ map[string]string) string {
+		return fmt.Sprintf("ssh-rsa AAAAFAKEPUBKEY%04d", n)
+	},
+	detector.KindPrivKey: func(n int, _ map[string]string) string {
+		return fmt.Sprintf("-----BEGIN OPENSSH PRIVATE KEY-----\nFAKE_PRIVATE_KEY_%03d\n-----END OPENSSH PRIVATE KEY-----", n)
 	},
 	detector.KindDSN: func(n int, extra map[string]string) string {
 		scheme := extra["scheme"]
