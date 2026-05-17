@@ -62,6 +62,10 @@ type Rule struct {
 	CaptureGroup int
 	ExtraFn      func(submatches []string) map[string]string
 	Validate     func(value string) bool
+	// Skip rules mark the matched range as covered (preventing later rules
+	// from tokenizing fragments inside it) but emit no Match — used to keep
+	// SSH algorithm identifiers like "chacha20-poly1305@openssh.com" intact.
+	Skip bool
 }
 
 // Chain runs Rules in order with a covered-range guard.
@@ -101,6 +105,11 @@ func (c *Chain) Find(text string) []Match {
 
 			value := text[start:end]
 			if rule.Validate != nil && !rule.Validate(value) {
+				continue
+			}
+
+			if rule.Skip {
+				covered = append(covered, interval{blockStart, blockEnd})
 				continue
 			}
 

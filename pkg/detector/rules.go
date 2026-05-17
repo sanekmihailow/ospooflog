@@ -68,7 +68,36 @@ var (
 	reSHA256FP = regexp.MustCompile(`\bSHA256:[A-Za-z0-9+/]{40,}={0,2}`)
 	// MD5 SSH fingerprint — 16 hex pairs separated by colons.
 	reMD5FP = regexp.MustCompile(`\bMD5:(?:[0-9a-fA-F]{2}:){15}[0-9a-fA-F]{2}\b`)
+
+	// SSH algorithm/cipher/MAC identifiers — "<token>@(openssh.com|libssh.org)"
+	// shapes (chacha20-poly1305@openssh.com, curve25519-sha256@libssh.org,
+	// hmac-sha2-256-etm@openssh.com, etc). Matched by a Skip rule so the
+	// whole token is held verbatim — keeps email and FQDN rules off.
+	reSSHAlgIdent = regexp.MustCompile(`\S+@(?:openssh\.com|libssh\.org)\b`)
+
+	// SSH/TLS algorithm-name local-parts that masquerade as email addresses
+	// (e.g. "rsa-sha2-512-cert-v01@openssh.com",
+	// "sk-ecdsa-sha2-nistp256@openssh.com"). Used by validEmail to reject
+	// algorithm strings without dragging in a domain blacklist.
+	reSSHAlgLocalPart = regexp.MustCompile(`(?i)^(?:sk-)?(?:ssh-(?:rsa|dss|ed25519)|rsa-sha2-(?:256|512)|ecdsa-sha2-nistp(?:256|384|521)|ed25519)(?:-cert-v\d+)?$`)
 )
+
+// validEmail rejects matches that are actually SSH algorithm identifiers.
+// SSH names use openssh.com / libssh.org as a fake "domain" half (e.g.
+// "chacha20-poly1305@openssh.com", "curve25519-sha256@libssh.org") and the
+// RFC-shaped "<alg>-cert-v01@..." host-key identifiers — both are e-mail
+// shape but never user addresses. Cheaper than a domain allowlist.
+func validEmail(s string) bool {
+	at := strings.LastIndexByte(s, '@')
+	if at <= 0 {
+		return false
+	}
+	domain := strings.ToLower(s[at+1:])
+	if domain == "openssh.com" || domain == "libssh.org" {
+		return false
+	}
+	return !reSSHAlgLocalPart.MatchString(s[:at])
+}
 
 func addrExtra(sub []string) map[string]string {
 	return map[string]string{"ip": sub[1], "port": sub[2]}
@@ -137,6 +166,8 @@ func DefaultRules() []Rule {
 		// PRIVKEY first — it spans newlines and embeds base64 that would
 		// otherwise be shredded by IP/UUID/etc.
 		{Kind: KindPrivKey, Re: rePEMPrivate},
+		// SSH algorithm identifiers — skip so neither EMAIL nor FQDN claim them.
+		{Re: reSSHAlgIdent, Skip: true},
 		{Kind: KindDSN, Re: reDSN, ExtraFn: dsnExtra},
 		{Kind: KindPubKey, Re: reSSHPubKey},
 		{Kind: KindPubKey, Re: reSSHPubKeyBare},
@@ -144,7 +175,7 @@ func DefaultRules() []Rule {
 		{Kind: KindFingerprint, Re: reMD5FP},
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindUUID, Re: reUUID},
-		{Kind: KindEmail, Re: reEmail},
+		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
@@ -162,6 +193,7 @@ func DefaultRules() []Rule {
 func AggressiveRules() []Rule {
 	return []Rule{
 		{Kind: KindPrivKey, Re: rePEMPrivate},
+		{Re: reSSHAlgIdent, Skip: true},
 		{Kind: KindDSN, Re: reDSN, ExtraFn: dsnExtra},
 		{Kind: KindPubKey, Re: reSSHPubKey},
 		{Kind: KindPubKey, Re: reSSHPubKeyBare},
@@ -169,7 +201,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindFingerprint, Re: reMD5FP},
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindUUID, Re: reUUID},
-		{Kind: KindEmail, Re: reEmail},
+		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
