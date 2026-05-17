@@ -28,6 +28,9 @@ const (
 	KindPort  EntityKind = "PORT"
 	KindUser  EntityKind = "USER"
 	KindPath  EntityKind = "PATH"
+	// KindOverride tags pairs from --overrides applied as literal sed-style
+	// substitutions, independent of any detector rule.
+	KindOverride EntityKind = "OVR"
 )
 
 // Match is a single detected span. Start/End refer to the substring that

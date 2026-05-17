@@ -82,6 +82,29 @@ func (m *Mapper) SetOverrides(o map[string]string) {
 	m.overrides = o
 }
 
+// RegisterOverride records a literal (origin, replace) pair as an OVR_NNN
+// entry so Restore can round-trip the replace value back to origin. No-op
+// if origin is already registered. Used by the sed-style override path,
+// which bypasses the detector entirely.
+func (m *Mapper) RegisterOverride(origin, replace string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.byOrigin[origin]; ok {
+		return
+	}
+	m.counters[detector.KindOverride]++
+	n := m.counters[detector.KindOverride]
+	e := &Entry{
+		Token:   fmt.Sprintf("%s_%03d", detector.KindOverride, n),
+		Kind:    detector.KindOverride,
+		Origin:  origin,
+		Replace: replace,
+	}
+	m.byOrigin[origin] = e
+	m.byToken[e.Token] = e
+	m.byReplace[replace] = e
+}
+
 // Restore looks up the original value by replace value. ok=false if the
 // replace value is unknown (e.g. the AI fabricated it).
 func (m *Mapper) Restore(replace string) (string, bool) {

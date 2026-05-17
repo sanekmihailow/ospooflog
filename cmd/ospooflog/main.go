@@ -67,8 +67,10 @@ func run(args []string) error {
 	if err := session.Load(o.Session, m); err != nil {
 		return fmt.Errorf("session load: %w", err)
 	}
+	var ov map[string]string
 	if o.Overrides != "" {
-		ov, err := loadOverrides(o.Overrides)
+		var err error
+		ov, err = loadOverrides(o.Overrides)
 		if err != nil {
 			return fmt.Errorf("overrides: %w", err)
 		}
@@ -83,7 +85,7 @@ func run(args []string) error {
 
 	switch parser.Active.Name {
 	case "obfuscate":
-		return runObfuscate(o, m)
+		return runObfuscate(o, m, ov)
 	case "restore":
 		return runRestore(o, m)
 	case "show":
@@ -93,7 +95,7 @@ func run(args []string) error {
 	}
 }
 
-func runObfuscate(o opts, m *mapper.Mapper) error {
+func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
 	rules := detector.DefaultRules()
 	if o.Aggressive {
 		rules = detector.AggressiveRules()
@@ -103,6 +105,32 @@ func runObfuscate(o opts, m *mapper.Mapper) error {
 	text, err := readInput(o.Input)
 	if err != nil {
 		return err
+	}
+
+	// Literal sed-style overrides: replace every occurrence of origin with a
+	// NUL-bracketed placeholder before detection so (a) the detector cannot
+	// re-tokenize the replace value and (b) the substitution wins even when
+	// no rule would have matched origin. NUL is illegal inside JSON strings,
+	// so this path only runs in plain-text mode; --json keeps the old
+	// SetOverrides behavior. Longest origins first so shorter ones don't
+	// clobber overlapping prefixes.
+	var ovSlots []struct{ replace string }
+	if !o.JSON && len(ov) > 0 {
+		keys := make([]string, 0, len(ov))
+		for k := range ov {
+			keys = append(keys, k)
+		}
+		sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
+		for _, origin := range keys {
+			repl := ov[origin]
+			if origin == "" || repl == "" || !strings.Contains(text, origin) {
+				continue
+			}
+			ph := fmt.Sprintf("\x00OVR%d\x00", len(ovSlots))
+			text = strings.ReplaceAll(text, origin, ph)
+			ovSlots = append(ovSlots, struct{ replace string }{repl})
+			m.RegisterOverride(origin, repl)
+		}
 	}
 
 	out, closeOut, err := openOutput(o.Output)
@@ -121,6 +149,9 @@ func runObfuscate(o opts, m *mapper.Mapper) error {
 		result = jsonproc.New(obf, m, splitCSV(o.AllowKeys)).Process(text)
 	} else {
 		result = obf.Obfuscate(text)
+	}
+	for i, s := range ovSlots {
+		result = strings.ReplaceAll(result, fmt.Sprintf("\x00OVR%d\x00", i), s.replace)
 	}
 	if _, err := out.Write([]byte(result)); err != nil {
 		return fmt.Errorf("write output: %w", err)
