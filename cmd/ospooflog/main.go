@@ -16,6 +16,7 @@ import (
 	flags "github.com/jessevdk/go-flags"
 	"gopkg.in/yaml.v3"
 
+	"github.com/sanekmihailow/ospooflog/pkg/audithex"
 	"github.com/sanekmihailow/ospooflog/pkg/detector"
 	"github.com/sanekmihailow/ospooflog/pkg/jsonproc"
 	"github.com/sanekmihailow/ospooflog/pkg/mapper"
@@ -148,6 +149,7 @@ func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
 	if o.JSON {
 		result = jsonproc.New(obf, m, splitCSV(o.AllowKeys)).Process(text)
 	} else {
+		text = audithex.Process(text, obf)
 		result = obf.Obfuscate(text)
 	}
 	for i, s := range ovSlots {
@@ -178,7 +180,9 @@ func runRestore(o opts, m *mapper.Mapper) error {
 		return fmt.Errorf("output: %w", err)
 	}
 	defer closeOut()
-	result := restorer.New(m, o.StrictRestore).Restore(text)
+	r := restorer.New(m, o.StrictRestore)
+	text = audithex.Restore(text, r)
+	result := r.Restore(text)
 	if _, err := out.Write([]byte(result)); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}

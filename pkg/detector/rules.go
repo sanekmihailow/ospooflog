@@ -94,6 +94,9 @@ var (
 	// quoted and bare forms. The leading \b prevents matching tail-tokens
 	// like "vtiger_password".
 	rePasswordAssign = regexp.MustCompile(`(?i)\b(?:password|passwd|pwd)\s*[=:]\s*['"]?([^'"\s,;]+)`)
+	// Command-line password flags. Long-form only — short flags like -p are
+	// too ambiguous (mysql -p, ssh -p PORT) to use unconditionally.
+	rePasswordFlag = regexp.MustCompile(`(?i)\B--(?:password|passwd|pwd)[= ]['"]?([^'"\s]+)`)
 
 	// MySQL GRANT-style 'user'@'host'. We mask only the user half — host
 	// is usually 'localhost' / '%' / an IP that other rules already cover.
@@ -210,6 +213,7 @@ func DefaultRules() []Rule {
 		{Kind: KindFingerprint, Re: reMD5FP},
 		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1},
 		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1},
+		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindUUID, Re: reUUID},
@@ -241,6 +245,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindFingerprint, Re: reMD5FP},
 		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1},
 		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1},
+		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1},
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindUUID, Re: reUUID},
