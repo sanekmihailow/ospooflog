@@ -23,6 +23,7 @@ const (
 	KindAddr  EntityKind = "ADDR"
 	KindIP    EntityKind = "IP"
 	KindIP6   EntityKind = "IP6"
+	KindMAC   EntityKind = "MAC"
 	KindHost  EntityKind = "HOST"
 	KindFQDN  EntityKind = "FQDN"
 	KindPort  EntityKind = "PORT"

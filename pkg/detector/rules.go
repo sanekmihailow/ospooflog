@@ -14,6 +14,9 @@ var (
 	reEmail = regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`)
 	reAddr  = regexp.MustCompile(`\b((?:\d{1,3}\.){3}\d{1,3}):(\d{1,5})\b`)
 	reIP    = regexp.MustCompile(`\b(?:\d{1,3}\.){3}\d{1,3}\b`)
+	// MAC — 6 hex pairs separated by ':' or '-'. The pair-anchor avoids
+	// confusion with IPv6 (which has variable-width groups separated by ':').
+	reMAC = regexp.MustCompile(`\b[0-9a-fA-F]{2}(?:[:-][0-9a-fA-F]{2}){5}\b`)
 	// IPv6 — wide regex (allows empty blocks for the "::" compressed form,
 	// optional %zone suffix), final filtering happens in validIPv6 via
 	// net.ParseIP. The leading/trailing non-hex-colon class anchors prevent
@@ -212,6 +215,7 @@ func DefaultRules() []Rule {
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
+		{Kind: KindMAC, Re: reMAC},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
 		// HOST before FQDN so .local/.internal names get the "host" treatment
@@ -242,6 +246,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
+		{Kind: KindMAC, Re: reMAC},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
 		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},

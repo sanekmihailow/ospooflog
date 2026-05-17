@@ -17,6 +17,11 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 	detector.KindIP6: func(n int, _ map[string]string) string {
 		return fmt.Sprintf("fd00::%x", n)
 	},
+	detector.KindMAC: func(n int, _ map[string]string) string {
+		// IEEE locally-administered range (second hex digit of first octet
+		// is 2/6/A/E). 02:xx is safe and obviously fake.
+		return fmt.Sprintf("02:00:00:00:%02x:%02x", (n>>8)&0xff, n&0xff)
+	},
 	detector.KindAddr: func(n int, extra map[string]string) string {
 		port := extra["port"]
 		if port == "" {
