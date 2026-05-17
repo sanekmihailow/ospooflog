@@ -143,7 +143,24 @@ func addrExtra(sub []string) map[string]string {
 
 func validIPv4(s string) bool {
 	ip := net.ParseIP(s)
-	return ip != nil && ip.To4() != nil
+	v4 := ip.To4()
+	if v4 == nil {
+		return false
+	}
+	// Pass through semantic constants — masking these turns "listening on
+	// 0.0.0.0" or "netmask 255.255.255.0" into nonsense for the AI.
+	if ip.IsUnspecified() || ip.IsLoopback() {
+		return false
+	}
+	if v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255 {
+		return false
+	}
+	// IPv4 netmask: contiguous 1-bits from the left. net.IPv4Mask.Size()
+	// returns ones>0 only for valid masks.
+	if ones, bits := net.IPv4Mask(v4[0], v4[1], v4[2], v4[3]).Size(); bits == 32 && ones > 0 {
+		return false
+	}
+	return true
 }
 
 func validIPv6(s string) bool {
@@ -152,7 +169,13 @@ func validIPv6(s string) bool {
 		s = s[:i]
 	}
 	ip := net.ParseIP(s)
-	return ip != nil && ip.To4() == nil
+	if ip == nil || ip.To4() != nil {
+		return false
+	}
+	if ip.IsUnspecified() || ip.IsLoopback() {
+		return false
+	}
+	return true
 }
 
 func validAddr(s string) bool {
