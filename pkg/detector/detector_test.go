@@ -117,6 +117,42 @@ func TestHost_LocalInternalSuffix(t *testing.T) {
 	}
 }
 
+func TestFQDN_IANATLDsAndBlacklist(t *testing.T) {
+	cases := []struct {
+		text string
+		want []string
+	}{
+		{"reach api.example.com", []string{"api.example.com"}},
+		// new gTLDs from IANA list
+		{"deploy dashboard.example.cloud and shop.acme.shop", []string{"dashboard.example.cloud", "shop.acme.shop"}},
+		// city / region TLDs
+		{"site at example.tokyo", []string{"example.tokyo"}},
+		// punycoded IDN ccTLDs: xn--p1ai (.рф), xn--fiqs8s (.中国)
+		{"reach host.xn--p1ai or shop.xn--fiqs8s", []string{"host.xn--p1ai", "shop.xn--fiqs8s"}},
+		// blacklisted .so / .zip / .mov / .bar must NOT match
+		{"libc.so.6 archive.zip movie.mov foo.bar", nil},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got []string
+		for _, m := range matches {
+			if m.Kind == KindFQDN {
+				got = append(got, m.Value)
+			}
+		}
+		if len(got) != len(tc.want) {
+			t.Errorf("text=%q: want %v, got %v", tc.text, tc.want, got)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("text=%q: want %v, got %v", tc.text, tc.want, got)
+				break
+			}
+		}
+	}
+}
+
 func TestFQDN_RejectsPureDigits(t *testing.T) {
 	text := "version 1.2.3.4 and api.example.com"
 	matches := New(DefaultRules()).Find(text)

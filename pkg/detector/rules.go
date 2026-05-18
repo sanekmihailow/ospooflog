@@ -43,9 +43,10 @@ var (
 	// matches any random "well-known" or "non-empty".
 	reHostAggressive = regexp.MustCompile(`(?i)\b(?:host|server|node|hostname)\s*[=:]\s*([a-zA-Z][a-zA-Z0-9]*-[a-zA-Z0-9-]+[a-zA-Z0-9])\b`)
 
-	// FQDN — last label must be from a known TLD list so we don't snag
-	// unrelated dotted strings like "app.log" or "module.go".
-	reFQDN = regexp.MustCompile(`\b[a-zA-Z][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)*\.(?:com|org|net|io|dev|app|info|biz|co|edu|gov|mil|ai|cloud|tech|us|uk|de|fr|jp|ru|cn|es|it|nl|pl|au|ca|br|in|me|tv|gg|so|ch|se|no|fi|dk|be|at|cz)\b`)
+	// FQDN — any "label.label[.label…]" shape. The TLD check is done
+	// post-match in validFQDN so the regex stays simple and the canonical
+	// IANA list lives in tlds.go as data, not regex syntax.
+	reFQDN = regexp.MustCompile(`\b[a-zA-Z][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]*)+\b`)
 
 	// PORT — standalone ":1234". Leading non-word char prevents matching the
 	// port half of an "ip:port" pair (which is already eaten by ADDR anyway).
@@ -186,6 +187,34 @@ var (
 	// algorithm strings without dragging in a domain blacklist.
 	reSSHAlgLocalPart = regexp.MustCompile(`(?i)^(?:sk-)?(?:ssh-(?:rsa|dss|ed25519)|rsa-sha2-(?:256|512)|ecdsa-sha2-nistp(?:256|384|521)|ed25519)(?:-cert-v\d+)?$`)
 )
+
+// validTLDs is the IANA TLD set in lowercase form. Initialised once from
+// the embedded ianaTLDs string with a small blacklist of TLDs that collide
+// with common log-content tokens: ".so" (shared-library extension), ".zip"
+// and ".mov" (archive / video extensions), ".bar" (the "foo.bar" idiom).
+// Users can extend via --overrides if a specific TLD is noisy in their logs.
+var validTLDs = func() map[string]bool {
+	m := make(map[string]bool, 1500)
+	for _, t := range strings.Split(ianaTLDs, "\n") {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			m[t] = true
+		}
+	}
+	for _, t := range []string{"so", "zip", "mov", "bar"} {
+		delete(m, t)
+	}
+	return m
+}()
+
+// validFQDN keeps regex matches whose last label is an IANA-registered TLD.
+func validFQDN(s string) bool {
+	i := strings.LastIndexByte(s, '.')
+	if i < 0 {
+		return false
+	}
+	return validTLDs[strings.ToLower(s[i+1:])]
+}
 
 // validEmail rejects matches that are actually SSH algorithm identifiers.
 // SSH names use openssh.com / libssh.org as a fake "domain" half (e.g.
@@ -437,7 +466,7 @@ func DefaultRules() []Rule {
 		// instead of being relabelled as a generic FQDN.
 		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
 		{Kind: KindHost, Re: reHostConservative},
-		{Kind: KindFQDN, Re: reFQDN},
+		{Kind: KindFQDN, Re: reFQDN, Validate: validFQDN},
 		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
@@ -488,7 +517,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
 		{Kind: KindHost, Re: reHostConservative},
 		{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1},
-		{Kind: KindFQDN, Re: reFQDN},
+		{Kind: KindFQDN, Re: reFQDN, Validate: validFQDN},
 		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
