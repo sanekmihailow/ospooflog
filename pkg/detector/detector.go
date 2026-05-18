@@ -43,6 +43,9 @@ const (
 	KindPrivKey EntityKind = "PRIVKEY"
 	// KindCard covers credit / payment card numbers that pass a Luhn check.
 	KindCard EntityKind = "CARD"
+	// KindPhone covers phone numbers in E.164 form and keyword-anchored
+	// shapes ("phone: 555-1234").
+	KindPhone EntityKind = "PHONE"
 	// KindOverride tags pairs from --overrides applied as literal sed-style
 	// substitutions, independent of any detector rule.
 	KindOverride EntityKind = "OVR"

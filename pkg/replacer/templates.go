@@ -53,6 +53,11 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 	detector.KindUUID: func(n int, _ map[string]string) string {
 		return fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
 	},
+	detector.KindPhone: func(n int, _ map[string]string) string {
+		// NANP "555-0100" through "555-0199" range is reserved for fictional
+		// use, so a fake here can never collide with a real subscriber.
+		return fmt.Sprintf("+15555550%03d", n%1000)
+	},
 	detector.KindCard: func(n int, _ map[string]string) string {
 		// 4000-series is reserved for Visa test cards. The base "4000 0000
 		// 0000 0000" passes Luhn; we vary the last four digits with the

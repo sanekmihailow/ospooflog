@@ -257,6 +257,45 @@ func TestCreditCard_LuhnAndBrand(t *testing.T) {
 	}
 }
 
+func TestPhone_E164AndContext(t *testing.T) {
+	cases := []struct {
+		text string
+		want []string
+	}{
+		// Bare E.164
+		{"call +14155552671 now", []string{"+14155552671"}},
+		// Russian E.164 (11 digits after +)
+		{"sms +74951234567 ok", []string{"+74951234567"}},
+		// Keyword anchor, hyphenated US
+		{"phone: 415-555-2671 home", []string{"415-555-2671"}},
+		// Keyword anchor with leading +
+		{"mobile=+14155552671 stored", []string{"+14155552671"}},
+		// Too few digits — rejected by validPhone
+		{"phone: 12-34 noise", nil},
+		// No anchor + no leading + → not picked up (avoid false positives)
+		{"id 4155552671 here", nil},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got []string
+		for _, m := range matches {
+			if m.Kind == KindPhone {
+				got = append(got, m.Value)
+			}
+		}
+		if len(got) != len(tc.want) {
+			t.Errorf("text=%q: want %v, got %v", tc.text, tc.want, got)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("text=%q: want %v, got %v", tc.text, tc.want, got)
+				break
+			}
+		}
+	}
+}
+
 func TestEmpty(t *testing.T) {
 	matches := New(DefaultRules()).Find("")
 	if len(matches) != 0 {

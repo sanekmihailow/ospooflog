@@ -123,6 +123,15 @@ var (
 	// so the validation (Luhn + known brand prefix) lives in validCard.
 	reCreditCard = regexp.MustCompile(`\b\d(?:[- ]?\d){12,18}\b`)
 
+	// Phone in E.164 international form: "+" plus 7–15 digits, first digit
+	// 1–9. The leading "+" is what keeps the FP rate near zero — bare digit
+	// runs of this length are too noisy without context.
+	rePhoneE164 = regexp.MustCompile(`\+[1-9]\d{6,14}\b`)
+	// Phone with an explicit "phone:" / "tel=" / "mobile=" / "fax:" /
+	// "cell:" / "msisdn=" keyword. Capture must start and end with a digit
+	// so trailing whitespace or punctuation doesn't leak into the value.
+	rePhoneContext = regexp.MustCompile(`(?i)\b(?:phone|tel|mobile|fax|cell|msisdn)\s*[:=]\s*(\+?\d[\d\s\-().]{5,18}\d)`)
+
 	// MySQL GRANT-style 'user'@'host'. We mask only the user half — host
 	// is usually 'localhost' / '%' / an IP that other rules already cover.
 	reMySQLUserAt = regexp.MustCompile(`'([a-zA-Z_][a-zA-Z0-9_-]*)'@'[^']+'`)
@@ -220,6 +229,20 @@ func validCard(s string) bool {
 		alt = !alt
 	}
 	return sum%10 == 0
+}
+
+// validPhone keeps captures that hold 7–15 digits (E.164 spec range)
+// ignoring any separators. Cuts both too-short noise and over-long IDs
+// that drifted through the keyword-anchored rule.
+func validPhone(s string) bool {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= '0' && c <= '9' {
+			n++
+		}
+	}
+	return n >= 7 && n <= 15
 }
 
 // validSyslogHost rejects tokens that look syslog-positional but are
@@ -344,6 +367,8 @@ func DefaultRules() []Rule {
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
+		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},
+		{Kind: KindPhone, Re: rePhoneContext, CaptureGroup: 1, Validate: validPhone},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindMAC, Re: reMAC},
@@ -385,6 +410,8 @@ func AggressiveRules() []Rule {
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
+		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},
+		{Kind: KindPhone, Re: rePhoneContext, CaptureGroup: 1, Validate: validPhone},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindMAC, Re: reMAC},
