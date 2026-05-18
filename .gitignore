@@ -31,3 +31,5 @@ go.work.sum
 # .vscode/
 .md/*
 .go/*
+#
+/log/
