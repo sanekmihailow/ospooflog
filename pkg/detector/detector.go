@@ -41,6 +41,8 @@ const (
 	KindPubKey EntityKind = "PUBKEY"
 	// KindPrivKey covers PEM-armored private key blocks.
 	KindPrivKey EntityKind = "PRIVKEY"
+	// KindCard covers credit / payment card numbers that pass a Luhn check.
+	KindCard EntityKind = "CARD"
 	// KindOverride tags pairs from --overrides applied as literal sed-style
 	// substitutions, independent of any detector rule.
 	KindOverride EntityKind = "OVR"

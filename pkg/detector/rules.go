@@ -118,6 +118,11 @@ var (
 	// Slack tokens: xox[abprs]-… (bot/app/user/refresh/legacy).
 	reSlackToken = regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`)
 
+	// Credit-card number: 13–19 digits with optional space/dash separators
+	// between any two digits. Lookahead/lookbehind isn't supported in RE2,
+	// so the validation (Luhn + known brand prefix) lives in validCard.
+	reCreditCard = regexp.MustCompile(`\b\d(?:[- ]?\d){12,18}\b`)
+
 	// MySQL GRANT-style 'user'@'host'. We mask only the user half — host
 	// is usually 'localhost' / '%' / an IP that other rules already cover.
 	reMySQLUserAt = regexp.MustCompile(`'([a-zA-Z_][a-zA-Z0-9_-]*)'@'[^']+'`)
@@ -171,6 +176,50 @@ var userStopWords = map[string]bool{
 // or any digits/underscores form (user1, vtiger_user) are unaffected.
 func validUser(s string) bool {
 	return !userStopWords[strings.ToLower(s)]
+}
+
+// validCard accepts only digit strings that start with a known card-brand
+// prefix (Visa/MC/AmEx/Discover/Diners/JCB) and pass the Luhn checksum.
+// The brand-prefix gate keeps random Luhn-valid IDs (timestamps, hashes)
+// from masquerading as cards.
+func validCard(s string) bool {
+	var first byte
+	count := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < '0' || c > '9' {
+			continue
+		}
+		if count == 0 {
+			first = c
+		}
+		count++
+	}
+	if count < 13 || count > 19 {
+		return false
+	}
+	switch first {
+	case '3', '4', '5', '6':
+	default:
+		return false
+	}
+	sum := 0
+	alt := false
+	for i := len(s) - 1; i >= 0; i-- {
+		c := s[i]
+		if c < '0' || c > '9' {
+			continue
+		}
+		d := int(c - '0')
+		if alt {
+			if d *= 2; d > 9 {
+				d -= 9
+			}
+		}
+		sum += d
+		alt = !alt
+	}
+	return sum%10 == 0
 }
 
 // validSyslogHost rejects tokens that look syslog-positional but are
@@ -294,6 +343,7 @@ func DefaultRules() []Rule {
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
+		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindMAC, Re: reMAC},
@@ -334,6 +384,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
+		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindMAC, Re: reMAC},

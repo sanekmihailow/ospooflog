@@ -53,6 +53,26 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 	detector.KindUUID: func(n int, _ map[string]string) string {
 		return fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
 	},
+	detector.KindCard: func(n int, _ map[string]string) string {
+		// 4000-series is reserved for Visa test cards. The base "4000 0000
+		// 0000 0000" passes Luhn; we vary the last four digits with the
+		// counter and append a recomputed check digit so the fake also
+		// validates — keeps any downstream Luhn-aware code happy.
+		body := fmt.Sprintf("40000000000%04d", n%10000)
+		sum, alt := 0, true
+		for i := 0; i < len(body); i++ {
+			d := int(body[i] - '0')
+			if alt {
+				if d *= 2; d > 9 {
+					d -= 9
+				}
+			}
+			sum += d
+			alt = !alt
+		}
+		check := (10 - sum%10) % 10
+		return fmt.Sprintf("%s%d", body, check)
+	},
 	detector.KindToken: func(n int, _ map[string]string) string {
 		// Fake JWT-shaped string. Header decodes to {"alg":"HS256"},
 		// payload is meaningless, signature is "fakesigNNNN" so it stays

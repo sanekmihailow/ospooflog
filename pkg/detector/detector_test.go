@@ -216,6 +216,47 @@ func TestIP_RejectsInvalidOctets(t *testing.T) {
 	}
 }
 
+func TestCreditCard_LuhnAndBrand(t *testing.T) {
+	cases := []struct {
+		text string
+		want []string
+	}{
+		// Visa test card, no separators
+		{"payment 4111111111111111 done", []string{"4111111111111111"}},
+		// Visa test card, hyphenated
+		{"card 4111-1111-1111-1111 ok", []string{"4111-1111-1111-1111"}},
+		// Visa test card, space-separated
+		{"PAN 4111 1111 1111 1111 ok", []string{"4111 1111 1111 1111"}},
+		// AmEx test card, 15 digits, hyphenated 4-6-5
+		{"amex 3782-822463-10005 ok", []string{"3782-822463-10005"}},
+		// Random 16 digits — Luhn invalid → not a match
+		{"id 1234567890123456 ok", nil},
+		// All zeros — passes Luhn but brand digit '0' rejected
+		{"id 0000000000000000 ok", nil},
+		// Brand digit '7' — rejected even if Luhn-valid (test case has bad Luhn anyway)
+		{"id 7111111111111111 ok", nil},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got []string
+		for _, m := range matches {
+			if m.Kind == KindCard {
+				got = append(got, m.Value)
+			}
+		}
+		if len(got) != len(tc.want) {
+			t.Errorf("text=%q: want %v, got %v", tc.text, tc.want, got)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("text=%q: want %v, got %v", tc.text, tc.want, got)
+				break
+			}
+		}
+	}
+}
+
 func TestEmpty(t *testing.T) {
 	matches := New(DefaultRules()).Find("")
 	if len(matches) != 0 {
