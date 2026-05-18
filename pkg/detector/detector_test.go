@@ -76,6 +76,21 @@ func TestUser_OnlyInExplicitContext(t *testing.T) {
 	}
 }
 
+func TestUser_HTTPDCombinedFormat(t *testing.T) {
+	text := `192.168.1.10 - frank [10/Oct/2000:13:55:36 -0700] "GET / HTTP/1.0" 200 1234` + "\n" +
+		`192.168.1.11 - - [10/Oct/2000:13:55:37 -0700] "GET /a HTTP/1.0" 404 12`
+	matches := New(DefaultRules()).Find(text)
+	var users []string
+	for _, m := range matches {
+		if m.Kind == KindUser {
+			users = append(users, m.Value)
+		}
+	}
+	if len(users) != 1 || users[0] != "frank" {
+		t.Fatalf("want [frank], got %v (matches=%+v)", users, matches)
+	}
+}
+
 func TestUser_AggressiveAddsAsFor(t *testing.T) {
 	text := "running as alice for processing"
 	conservative := New(DefaultRules()).Find(text)

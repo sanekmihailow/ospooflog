@@ -49,6 +49,11 @@ var (
 	// context. "acct" picks up auditd / PAM records like acct="root". The
 	// optional quote after "=" lets the capture cross past quoted values.
 	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name)?|login|acct)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
+	// USER in httpd combined log format: third whitespace-delimited token on
+	// the line, anchored to the next-up "[DD/Mon/YYYY" timestamp shape that
+	// only httpd-family access logs produce. The leading [a-zA-Z0-9_] in the
+	// capture rejects the canonical "-" placeholder when no auth user is set.
+	reUserHTTPD = regexp.MustCompile(`(?m)^\S+\s+\S+\s+([a-zA-Z0-9_][a-zA-Z0-9._-]*)\s+\[\d{2}/[A-Z][a-z]{2}/\d{4}`)
 	// USER aggressive — also "as <name>" / "for <name>". Lots of false-positive
 	// risk ("as needed", "for example").
 	reUserAggressive = regexp.MustCompile(`(?i)\b(?:as|for)\s+([a-zA-Z][a-zA-Z0-9._-]{1,30})\b`)
@@ -300,6 +305,7 @@ func DefaultRules() []Rule {
 		{Kind: KindHost, Re: reHostConservative},
 		{Kind: KindFQDN, Re: reFQDN},
 		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
 		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
 	}
 }
@@ -338,6 +344,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1},
 		{Kind: KindFQDN, Re: reFQDN},
 		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
 		{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
 		{Kind: KindPath, Re: rePathAggressive, CaptureGroup: 1},

@@ -73,6 +73,11 @@ type Rule struct {
 	// from tokenizing fragments inside it) but emit no Match — used to keep
 	// SSH algorithm identifiers like "chacha20-poly1305@openssh.com" intact.
 	Skip bool
+	// BlockCaptureOnly narrows the covered-range claim to the capture span
+	// rather than the full regex match. Use when the rule needs a wide anchor
+	// (e.g. a httpd line prefix) to locate the value, but the anchor itself
+	// contains other entities that other rules must still be free to detect.
+	BlockCaptureOnly bool
 }
 
 // Chain runs Rules in order with a covered-range guard.
@@ -104,8 +109,12 @@ func (c *Chain) Find(text string) []Match {
 			start, end := idx[startIdx], idx[endIdx]
 			// Block out the entire regex match (idx[0:2]) — not just the capture
 			// span — so contextual prefixes like "user=" aren't picked apart by
-			// later rules.
+			// later rules. BlockCaptureOnly opts out for rules whose anchor
+			// legitimately overlaps other entities (e.g. httpd line prefix).
 			blockStart, blockEnd := idx[0], idx[1]
+			if rule.BlockCaptureOnly {
+				blockStart, blockEnd = start, end
+			}
 			if overlapsAny(blockStart, blockEnd, covered) {
 				continue
 			}
