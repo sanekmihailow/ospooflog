@@ -41,6 +41,10 @@ const (
 	KindPubKey EntityKind = "PUBKEY"
 	// KindPrivKey covers PEM-armored private key blocks.
 	KindPrivKey EntityKind = "PRIVKEY"
+	// KindARN covers AWS Amazon Resource Names — "arn:aws:service:region:
+	// account-id:resource". Worth its own kind because the format encodes
+	// the 12-digit account ID (security-sensitive) plus resource paths.
+	KindARN EntityKind = "ARN"
 	// KindCard covers credit / payment card numbers that pass a Luhn check.
 	KindCard EntityKind = "CARD"
 	// KindPhone covers phone numbers in E.164 form and keyword-anchored

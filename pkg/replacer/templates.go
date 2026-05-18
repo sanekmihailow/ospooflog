@@ -53,6 +53,17 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 	detector.KindUUID: func(n int, _ map[string]string) string {
 		return fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
 	},
+	detector.KindARN: func(n int, extra map[string]string) string {
+		service := extra["service"]
+		if service == "" {
+			service = "s3"
+		}
+		region := extra["region"]
+		// Preserve service and region so the AI can still reason about
+		// which AWS service is involved; account ID and resource name
+		// are flattened.
+		return fmt.Sprintf("arn:aws:%s:%s:000000000000:fake-resource/n%d", service, region, n)
+	},
 	detector.KindPhone: func(n int, _ map[string]string) string {
 		// NANP "555-0100" through "555-0199" range is reserved for fictional
 		// use, so a fake here can never collide with a real subscriber.

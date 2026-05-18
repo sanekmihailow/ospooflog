@@ -9,6 +9,12 @@ import (
 
 var (
 	reDSN   = regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?|amqps?|kafka)://[^\s"'<>\x60]+`)
+	// AWS ARN: "arn:partition:service:region:account-id:resource". Region
+	// and account-id are blank for some services (S3, IAM). Resource may
+	// contain "/" or ":" separators. Captured greedily up to whitespace
+	// or quote. Group 1 is service, group 2 is region — picked up by
+	// arnExtra so the fake can preserve the service kind.
+	reARN = regexp.MustCompile(`\barn:aws[a-z0-9-]*:([a-z0-9-]+):([a-z0-9-]*):[0-9]{0,12}:[a-zA-Z0-9_/:.\-]+`)
 	reJWT   = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{4,}\.eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b`)
 	reUUID  = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 	reEmail = regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`)
@@ -83,6 +89,11 @@ var (
 	// ("SHA256:gIIV9aBJ...") and hex-64 ("SHA256:4783cf01..."). One rule
 	// covers both since the char class is a superset.
 	reSHA256FP = regexp.MustCompile(`\bSHA256:[A-Za-z0-9+/]{40,}={0,2}`)
+	// Container image / OCI digest: lowercase "sha256:" followed by
+	// exactly 64 hex chars. Distinct from the SSH form because OpenSSH
+	// uses uppercase "SHA256:" and base64 (43 chars), while OCI/Docker
+	// fix on lowercase + hex (64 chars).
+	reOCIDigest = regexp.MustCompile(`\bsha256:[a-f0-9]{64}\b`)
 	// MD5 SSH fingerprint — 16 hex pairs separated by colons.
 	reMD5FP = regexp.MustCompile(`\bMD5:(?:[0-9a-fA-F]{2}:){15}[0-9a-fA-F]{2}\b`)
 
@@ -336,6 +347,13 @@ func validAddr(s string) bool {
 	return n >= 1 && n <= 65535
 }
 
+func arnExtra(sub []string) map[string]string {
+	return map[string]string{
+		"service": sub[1],
+		"region":  sub[2],
+	}
+}
+
 func dsnExtra(sub []string) map[string]string {
 	u, err := url.Parse(sub[0])
 	if err != nil {
@@ -366,9 +384,11 @@ func DefaultRules() []Rule {
 		// SSH algorithm identifiers — skip so neither EMAIL nor FQDN claim them.
 		{Re: reSSHAlgIdent, Skip: true},
 		{Kind: KindDSN, Re: reDSN, ExtraFn: dsnExtra},
+		{Kind: KindARN, Re: reARN, ExtraFn: arnExtra},
 		{Kind: KindPubKey, Re: reSSHPubKey},
 		{Kind: KindPubKey, Re: reSSHPubKeyBare},
 		{Kind: KindFingerprint, Re: reSHA256FP},
+		{Kind: KindFingerprint, Re: reOCIDigest},
 		{Kind: KindFingerprint, Re: reMD5FP},
 		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1},
 		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1},
@@ -414,9 +434,11 @@ func AggressiveRules() []Rule {
 		{Kind: KindPrivKey, Re: rePEMPrivate},
 		{Re: reSSHAlgIdent, Skip: true},
 		{Kind: KindDSN, Re: reDSN, ExtraFn: dsnExtra},
+		{Kind: KindARN, Re: reARN, ExtraFn: arnExtra},
 		{Kind: KindPubKey, Re: reSSHPubKey},
 		{Kind: KindPubKey, Re: reSSHPubKeyBare},
 		{Kind: KindFingerprint, Re: reSHA256FP},
+		{Kind: KindFingerprint, Re: reOCIDigest},
 		{Kind: KindFingerprint, Re: reMD5FP},
 		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1},
 		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1},

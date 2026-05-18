@@ -335,6 +335,55 @@ func repeat(s string, n int) string {
 	return string(out)
 }
 
+func TestOCIDigest(t *testing.T) {
+	text := "pulled image@sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270 ok"
+	matches := New(DefaultRules()).Find(text)
+	var got []string
+	for _, m := range matches {
+		if m.Kind == KindFingerprint {
+			got = append(got, m.Value)
+		}
+	}
+	if len(got) != 1 || got[0] != "sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270" {
+		t.Errorf("want 1 fingerprint match for OCI digest, got %v", got)
+	}
+}
+
+func TestARN_PreservesServiceAndRegion(t *testing.T) {
+	cases := []struct {
+		text    string
+		service string
+		region  string
+	}{
+		// IAM ARN, no region
+		{"created arn:aws:iam::123456789012:user/Bob and quit", "iam", ""},
+		// S3 bucket ARN, no region or account
+		{"reading arn:aws:s3:::my-data-bucket/path/to/object now", "s3", ""},
+		// EC2 ARN with region and account
+		{"started arn:aws:ec2:us-east-1:123456789012:instance/i-1234567890abcdef0 ok", "ec2", "us-east-1"},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got *Match
+		for i := range matches {
+			if matches[i].Kind == KindARN {
+				got = &matches[i]
+				break
+			}
+		}
+		if got == nil {
+			t.Errorf("text=%q: no ARN match (matches=%+v)", tc.text, matches)
+			continue
+		}
+		if got.Extra["service"] != tc.service {
+			t.Errorf("text=%q: service want %q got %q", tc.text, tc.service, got.Extra["service"])
+		}
+		if got.Extra["region"] != tc.region {
+			t.Errorf("text=%q: region want %q got %q", tc.text, tc.region, got.Extra["region"])
+		}
+	}
+}
+
 func TestEmpty(t *testing.T) {
 	matches := New(DefaultRules()).Find("")
 	if len(matches) != 0 {
