@@ -296,6 +296,45 @@ func TestPhone_E164AndContext(t *testing.T) {
 	}
 }
 
+func TestAPIKey_VendorPrefixes(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"AWS A3T extension", "key=A3TGEXAMPLE234567ABC"},
+		{"AWS ABIA", "key=ABIAEXAMPLE234567ABC"},
+		{"GitLab PAT", "GITLAB_TOKEN=glpat-AbCdEfGhIjKlMnOpQrSt"},
+		{"Google API key", "key=AIza" + repeat("a", 35)},
+		// Split the prefix so the literal "sk_live_…" / "rk_test_…" doesn't
+		// appear contiguously in the source — GitHub Push Protection flags
+		// fake test fixtures that look like real Stripe keys at rest.
+		{"Stripe live secret", "stripe=sk_" + "live_" + "abcdefghij1234567890ABCDEF"},
+		{"Stripe restricted test", "stripe=rk_" + "test_" + "abcdefghij1234567890ABCDEF"},
+		{"Anthropic api", "ANTHROPIC_API_KEY=sk-ant-api03-" + repeat("a", 93) + "AA"},
+		{"OpenAI legacy", "OPENAI_API_KEY=sk-" + repeat("a", 20) + "T3BlbkFJ" + repeat("b", 20)},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got []string
+		for _, m := range matches {
+			if m.Kind == KindAPIKey {
+				got = append(got, m.Value)
+			}
+		}
+		if len(got) != 1 {
+			t.Errorf("%s: want exactly 1 APIKEY match, got %d (matches=%+v)", tc.name, len(got), matches)
+		}
+	}
+}
+
+func repeat(s string, n int) string {
+	out := make([]byte, 0, len(s)*n)
+	for i := 0; i < n; i++ {
+		out = append(out, s...)
+	}
+	return string(out)
+}
+
 func TestEmpty(t *testing.T) {
 	matches := New(DefaultRules()).Find("")
 	if len(matches) != 0 {

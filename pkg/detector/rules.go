@@ -109,14 +109,31 @@ var (
 	reBearerToken = regexp.MustCompile(`(?i)(?:Authorization:\s*)?Bearer\s+([A-Za-z0-9._~+/=\-]{16,})`)
 	// Generic API-key assignment: api_key, apikey, api-key, x-api-key, etc.
 	reAPIKeyAssign = regexp.MustCompile(`(?i)\b(?:x[-_]?)?api[-_]?key\s*[=:]\s*['"]?([A-Za-z0-9._~+/=\-]{12,})`)
-	// AWS access key IDs. AKIA = long-lived, ASIA = STS session, AROA/AGPA/
-	// AIPA/ANPA/ANVA/AIDA = other entity types. Always 20 chars total.
-	reAWSAccessKey = regexp.MustCompile(`\b(?:AKIA|ASIA|AROA|AGPA|AIPA|ANPA|ANVA|AIDA)[A-Z0-9]{16}\b`)
+	// AWS access key IDs. AKIA = long-lived, ASIA = STS session; the rest
+	// (A3T, ABIA, ACCA, AROA, AGPA, AIPA, ANPA, ANVA, AIDA) cover other
+	// IAM entity types. AWS access keys are encoded in the base32 alphabet
+	// (A–Z plus 2–7), and are always 20 chars total.
+	reAWSAccessKey = regexp.MustCompile(`\b(?:A3T[A-Z2-7]|AKIA|ASIA|AROA|AGPA|AIPA|ANPA|ANVA|AIDA|ABIA|ACCA)[A-Z2-7]{16}\b`)
 	// GitHub tokens: ghp_ (PAT), gho_ (OAuth), ghu_ (user-to-server),
 	// ghs_ (server-to-server), ghr_ (refresh).
 	reGitHubToken = regexp.MustCompile(`\bgh[posur]_[A-Za-z0-9]{36,}\b`)
 	// Slack tokens: xox[abprs]-… (bot/app/user/refresh/legacy).
 	reSlackToken = regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`)
+
+	// Anthropic API / admin keys. The trailing "AA" is a stable terminator
+	// in all currently-issued keys; the 93-char body is base64url-safe.
+	reAnthropicKey = regexp.MustCompile(`\bsk-ant-(?:api03|admin01)-[A-Za-z0-9_\-]{93}AA\b`)
+	// OpenAI keys — both legacy "sk-…20charsT3BlbkFJ…20chars" and current
+	// project/service/admin variants. T3BlbkFJ is base64("OpenAI") and
+	// appears in every issued key, which keeps FP near zero.
+	reOpenAIKey = regexp.MustCompile(`\bsk-(?:(?:proj|svcacct|admin)-(?:[A-Za-z0-9_-]{74}|[A-Za-z0-9_-]{58})T3BlbkFJ(?:[A-Za-z0-9_-]{74}|[A-Za-z0-9_-]{58})|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})\b`)
+	// Google API key (Maps, Firebase, GCP): "AIza" + 35 chars.
+	reGoogleAPIKey = regexp.MustCompile(`\bAIza[A-Za-z0-9_\-]{35}\b`)
+	// Stripe secret / restricted keys. Publishable "pk_" keys are public
+	// by design and don't need masking.
+	reStripeKey = regexp.MustCompile(`\b(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{10,99}\b`)
+	// GitLab personal / project / group access tokens.
+	reGitLabToken = regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20}\b`)
 
 	// Credit-card number: 13–19 digits with optional space/dash separators
 	// between any two digits. Lookahead/lookbehind isn't supported in RE2,
@@ -361,7 +378,12 @@ func DefaultRules() []Rule {
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
+		{Kind: KindAPIKey, Re: reGitLabToken},
 		{Kind: KindAPIKey, Re: reSlackToken},
+		{Kind: KindAPIKey, Re: reAnthropicKey},
+		{Kind: KindAPIKey, Re: reOpenAIKey},
+		{Kind: KindAPIKey, Re: reGoogleAPIKey},
+		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
@@ -404,7 +426,12 @@ func AggressiveRules() []Rule {
 		{Kind: KindToken, Re: reJWT},
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
+		{Kind: KindAPIKey, Re: reGitLabToken},
 		{Kind: KindAPIKey, Re: reSlackToken},
+		{Kind: KindAPIKey, Re: reAnthropicKey},
+		{Kind: KindAPIKey, Re: reOpenAIKey},
+		{Kind: KindAPIKey, Re: reGoogleAPIKey},
+		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
