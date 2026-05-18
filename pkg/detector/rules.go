@@ -55,6 +55,14 @@ var (
 	// context. "acct" picks up auditd / PAM records like acct="root". The
 	// optional quote after "=" lets the capture cross past quoted values.
 	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name)?|login|acct)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
+	// USER in sshd login messages. Default mode misses these without a
+	// dedicated rule because they use space-separated verbs, not "user="
+	// syntax. Covers the standard openssh vocabulary:
+	//   "Failed|Accepted <method> for [invalid user] <USER>"
+	//   "Invalid user <USER>"
+	//   "authenticating user <USER>"
+	//   "session opened|closed for user <USER>"
+	reUserSSHD = regexp.MustCompile(`(?i)\b(?:(?:Failed|Accepted)\s+(?:password|publickey|keyboard-interactive|none|gssapi-with-mic|hostbased)\s+for(?:\s+invalid\s+user)?|Invalid user|authenticating user|(?:opened|closed)\s+for\s+user)\s+([a-zA-Z_][a-zA-Z0-9._-]{0,30})\b`)
 	// USER in httpd combined log format: third whitespace-delimited token on
 	// the line, anchored to the next-up "[DD/Mon/YYYY" timestamp shape that
 	// only httpd-family access logs produce. The leading [a-zA-Z0-9_] in the
@@ -65,7 +73,11 @@ var (
 	reUserAggressive = regexp.MustCompile(`(?i)\b(?:as|for)\s+([a-zA-Z][a-zA-Z0-9._-]{1,30})\b`)
 
 	// PATH conservative — only absolute paths under known system roots.
-	rePathConservative = regexp.MustCompile(`(/(?:var|etc|home|opt|usr|tmp|mnt|srv|root)(?:/[A-Za-z0-9._-]+)+)`)
+	// Covers FHS roots that commonly carry binary/library/config paths
+	// worth masking (project-specific subpaths leak service topology).
+	// Excludes /proc, /sys, /dev — pseudo-fs paths are generally not
+	// sensitive and masking them makes logs harder for the AI to read.
+	rePathConservative = regexp.MustCompile(`(/(?:var|etc|home|opt|usr|tmp|mnt|srv|root|boot|sbin|bin|lib|lib64|run)(?:/[A-Za-z0-9._-]+)+)`)
 	// PATH aggressive — any 2+ segment absolute path starting with a letter.
 	rePathAggressive = regexp.MustCompile(`(/[a-zA-Z][A-Za-z0-9._-]*(?:/[A-Za-z0-9._-]+){1,})`)
 
@@ -120,6 +132,10 @@ var (
 	reBearerToken = regexp.MustCompile(`(?i)(?:Authorization:\s*)?Bearer\s+([A-Za-z0-9._~+/=\-]{16,})`)
 	// Generic API-key assignment: api_key, apikey, api-key, x-api-key, etc.
 	reAPIKeyAssign = regexp.MustCompile(`(?i)\b(?:x[-_]?)?api[-_]?key\s*[=:]\s*['"]?([A-Za-z0-9._~+/=\-]{12,})`)
+	// Generic secret / token assignments — "secret=", "token=",
+	// "access_token=", "client_secret=", "refresh_token=", etc. Min
+	// length 12 keeps short config values like "token=true" out.
+	reSecretAssign = regexp.MustCompile(`(?i)\b(?:secret|token|(?:access|refresh|auth|client|session|bearer|id)[_-]?(?:secret|token))\s*[=:]\s*['"]?([A-Za-z0-9._~+/=\-]{12,})`)
 	// AWS access key IDs. AKIA = long-lived, ASIA = STS session; the rest
 	// (A3T, ABIA, ACCA, AROA, AGPA, AIPA, ANPA, ANVA, AIDA) cover other
 	// IAM entity types. AWS access keys are encoded in the base32 alphabet
@@ -406,6 +422,7 @@ func DefaultRules() []Rule {
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
+		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
@@ -422,6 +439,7 @@ func DefaultRules() []Rule {
 		{Kind: KindHost, Re: reHostConservative},
 		{Kind: KindFQDN, Re: reFQDN},
 		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
 		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
 	}
@@ -456,6 +474,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1},
+		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
@@ -471,6 +490,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1},
 		{Kind: KindFQDN, Re: reFQDN},
 		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
 		{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},

@@ -141,6 +141,86 @@ func TestPath_Conservative(t *testing.T) {
 	}
 }
 
+func TestPath_ExtendedSystemRoots(t *testing.T) {
+	text := "exe=/sbin/auditctl ld /lib/x86_64-linux-gnu/libcrypto boot /boot/vmlinuz-6.8 sock /run/systemd/private bin /bin/bash but skip /custom/whatever"
+	matches := New(DefaultRules()).Find(text)
+	want := map[string]bool{
+		"/sbin/auditctl":                  false,
+		"/lib/x86_64-linux-gnu/libcrypto": false,
+		"/boot/vmlinuz-6.8":               false,
+		"/run/systemd/private":            false,
+		"/bin/bash":                       false,
+	}
+	for _, m := range matches {
+		if m.Kind == KindPath {
+			if _, ok := want[m.Value]; ok {
+				want[m.Value] = true
+			} else if m.Value == "/custom/whatever" {
+				t.Errorf("conservative path leaked outside known roots: %q", m.Value)
+			}
+		}
+	}
+	for k, v := range want {
+		if !v {
+			t.Errorf("path not detected: %q", k)
+		}
+	}
+}
+
+func TestUser_SSHDLoginPatterns(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"Failed publickey for sanya from 1.2.3.4 port 22", "sanya"},
+		{"Accepted password for alice from 5.6.7.8 port 22", "alice"},
+		{"Invalid user backdoor from 9.10.11.12 port 22", "backdoor"},
+		{"Failed password for invalid user attacker from 13.14.15.16", "attacker"},
+		{"session opened for user bob(uid=1001)", "bob"},
+		{"Connection closed by authenticating user carol 17.18.19.20", "carol"},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got string
+		for _, m := range matches {
+			if m.Kind == KindUser {
+				got = m.Value
+				break
+			}
+		}
+		if got != tc.want {
+			t.Errorf("text=%q: want user %q, got %q", tc.text, tc.want, got)
+		}
+	}
+}
+
+func TestSecretAssign_GenericNames(t *testing.T) {
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"secret=abc123def456ghi789", "abc123def456ghi789"},
+		{"access_token=ya29.a0AfH6SMBabcdef123456789", "ya29.a0AfH6SMBabcdef123456789"},
+		{"client_secret: 'p8e-very-long-secret-string'", "p8e-very-long-secret-string"},
+		{"refresh-token=1//0eabcdefghijklmnopqr", "1//0eabcdefghijklmnopqr"},
+		// Short config token should NOT trigger
+		{"token=true", ""},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got string
+		for _, m := range matches {
+			if m.Kind == KindAPIKey {
+				got = m.Value
+				break
+			}
+		}
+		if got != tc.want {
+			t.Errorf("text=%q: want %q, got %q", tc.text, tc.want, got)
+		}
+	}
+}
+
 func TestPath_Aggressive(t *testing.T) {
 	text := "open /custom/path/here"
 	matches := New(AggressiveRules()).Find(text)
