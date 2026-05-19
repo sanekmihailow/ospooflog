@@ -7,6 +7,7 @@
 package detector
 
 import (
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -93,6 +94,11 @@ type Rule struct {
 	// a fixed token like "AIza", "sk-ant-", "T3BlbkFJ". Match is case-
 	// sensitive — set it in the casing the regex actually requires.
 	Keyword string
+	// MinEntropy rejects captures whose Shannon entropy (bits-per-char over
+	// byte alphabet) falls below the threshold. Filters repeating placeholders
+	// like "AAAAAAAA" / "xxxxxxxx" and short trivial values like "true"
+	// without needing a giant string allowlist. Zero disables the check.
+	MinEntropy float64
 }
 
 // Chain runs Rules in order with a covered-range guard.
@@ -141,6 +147,9 @@ func (c *Chain) Find(text string) []Match {
 			if rule.Validate != nil && !rule.Validate(value) {
 				continue
 			}
+			if rule.MinEntropy > 0 && shannonEntropy(value) < rule.MinEntropy {
+				continue
+			}
 
 			if rule.Skip {
 				covered = append(covered, interval{blockStart, blockEnd})
@@ -164,6 +173,29 @@ func (c *Chain) Find(text string) []Match {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Start < results[j].Start })
 	return results
+}
+
+// shannonEntropy returns bits-per-char over the byte alphabet. Treats input
+// as bytes — works for ASCII and UTF-8 alike since the goal is to detect
+// low-variety strings ("AAAAA", "xxxxxxxx"), not to characterise language.
+func shannonEntropy(s string) float64 {
+	if len(s) == 0 {
+		return 0
+	}
+	var freq [256]int
+	for i := 0; i < len(s); i++ {
+		freq[s[i]]++
+	}
+	n := float64(len(s))
+	h := 0.0
+	for _, c := range freq {
+		if c == 0 {
+			continue
+		}
+		p := float64(c) / n
+		h -= p * math.Log2(p)
+	}
+	return h
 }
 
 func overlapsAny(start, end int, covered []interval) bool {
