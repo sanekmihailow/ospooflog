@@ -193,6 +193,28 @@ var (
 	// "Authorization:" header prefix in the same log line.
 	reBasicAuth = regexp.MustCompile(`(?i)(?:Authorization:\s*)?Basic\s+([A-Za-z0-9+/=]{16,})`)
 
+	// K8s Secret-style YAML value — indented "key: <b64>" lines where the
+	// value is exclusively base64 charset and ≥ 40 chars. Covers raw K8s
+	// Secrets (data:), helm releases (gzip+b64 blobs in sh.helm.release.v1.*
+	// — can be hundreds of KB single-line), prometheus-operator config
+	// secrets, ansible-vault, docker secrets. We trust the structural
+	// context (indented YAML key under a `data:`-style block); no decode is
+	// needed for this rule, the regex pattern alone implies sensitivity.
+	// {40,} has no upper bound — Go RE2 handles multi-MB single-line matches
+	// in linear time, fine for whole-Helm-release captures.
+	reK8sSecretValue = regexp.MustCompile(`(?m)^\s+[A-Za-z0-9_.-]+:\s+([A-Za-z0-9+/=]{40,})\s*$`)
+
+	// Environment variable with _B64 / _BASE64 suffix — common pattern for
+	// shipping credentials through env without quoting issues (CI runners,
+	// Docker envFrom, kubectl set env). The capture is the base64 value.
+	reB64EnvVar = regexp.MustCompile(`(?i)\b[A-Za-z][A-Za-z0-9_]*(?:_B64|_BASE64)\s*[=:]\s*['"]?([A-Za-z0-9+/=]{16,})`)
+
+	// Generic base64 blob — aggressive-only fallback for credentials packed
+	// into base64 outside of any recognised context (curl pipes, JSON config
+	// dumps, raw kubectl describe output). High entropy floor + decode-
+	// verify keeps S3 ETags / pod UIDs / SHA hashes from getting masked.
+	reGenericB64 = regexp.MustCompile(`\b[A-Za-z0-9+/]{32,}={0,2}`)
+
 	// Credit-card number: 13–19 digits with optional space/dash separators
 	// between any two digits. Lookahead/lookbehind isn't supported in RE2,
 	// so the validation (Luhn + known brand prefix) lives in validCard.
@@ -489,6 +511,8 @@ func DefaultRules() []Rule {
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reK8sSecretValue, CaptureGroup: 1, MinEntropy: 4.0},
+		{Kind: KindAPIKey, Re: reB64EnvVar, CaptureGroup: 1, MinEntropy: 4.0},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser, Keyword: "'@'"},
@@ -550,6 +574,8 @@ func AggressiveRules() []Rule {
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reK8sSecretValue, CaptureGroup: 1, MinEntropy: 4.0},
+		{Kind: KindAPIKey, Re: reB64EnvVar, CaptureGroup: 1, MinEntropy: 4.0},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser, Keyword: "'@'"},
@@ -573,5 +599,10 @@ func AggressiveRules() []Rule {
 		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
 		{Kind: KindPath, Re: rePathAggressive, CaptureGroup: 1},
 		{Kind: KindPort, Re: rePort, CaptureGroup: 1},
+		// Generic base64 decode-verify. Runs last so it only inspects spans
+		// not already claimed by higher-precision rules. Decodes the capture
+		// and emits a Match only if the decoded text contains a credential-
+		// class kind — keeps S3 ETags, pod UIDs, SHA hashes unmasked.
+		{Kind: KindAPIKey, Re: reGenericB64, MinEntropy: 4.5, DecodeBase64: true},
 	}
 }

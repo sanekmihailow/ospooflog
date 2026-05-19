@@ -7,6 +7,7 @@
 package detector
 
 import (
+	"encoding/base64"
 	"math"
 	"regexp"
 	"sort"
@@ -99,15 +100,40 @@ type Rule struct {
 	// like "AAAAAAAA" / "xxxxxxxx" and short trivial values like "true"
 	// without needing a giant string allowlist. Zero disables the check.
 	MinEntropy float64
+	// DecodeBase64 turns a rule into a "verifier": after the regex matches,
+	// the captured value is base64-decoded and the chain is re-run on the
+	// decoded text using an inner chain that excludes any DecodeBase64
+	// rules (no unbounded recursion). The outer Match is emitted only if
+	// the decoded text contains a credential-class kind (Password / APIKey
+	// / Token / PrivKey) — generic-info kinds (IP / UUID / Email) don't
+	// trigger, otherwise every random base64-shaped ID would get masked.
+	DecodeBase64 bool
 }
 
 // Chain runs Rules in order with a covered-range guard.
 type Chain struct {
 	rules []Rule
+	// inner is the rules slice with DecodeBase64 rules stripped. Used to
+	// scan decoded base64 payloads without recursing back through them.
+	// Built eagerly in New so Find is safe for concurrent use.
+	inner *Chain
 }
 
 func New(rules []Rule) *Chain {
-	return &Chain{rules: rules}
+	c := &Chain{rules: rules}
+	var hasDecode bool
+	var pass []Rule
+	for _, r := range rules {
+		if r.DecodeBase64 {
+			hasDecode = true
+			continue
+		}
+		pass = append(pass, r)
+	}
+	if hasDecode {
+		c.inner = &Chain{rules: pass}
+	}
+	return c
 }
 
 type interval struct{ start, end int }
@@ -152,6 +178,15 @@ func (c *Chain) Find(text string) []Match {
 			}
 			if isPlaceholder(value) {
 				continue
+			}
+			if rule.DecodeBase64 {
+				decoded, ok := tryB64Decode(value)
+				if !ok {
+					continue
+				}
+				if !innerHasSensitive(c.inner.Find(string(decoded))) {
+					continue
+				}
 			}
 
 			if rule.Skip {
@@ -254,6 +289,33 @@ func shannonEntropy(s string) float64 {
 		h -= p * math.Log2(p)
 	}
 	return h
+}
+
+// tryB64Decode attempts both standard and URL-safe base64, padding-tolerant.
+// Returns the decoded bytes and true on success; nil/false on any error.
+func tryB64Decode(s string) ([]byte, bool) {
+	s = strings.TrimRight(s, "=")
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b, true
+	}
+	if b, err := base64.RawURLEncoding.DecodeString(s); err == nil {
+		return b, true
+	}
+	return nil, false
+}
+
+// innerHasSensitive returns true if any match names a credential-class kind.
+// Generic-info kinds (IP, UUID, Email, FQDN, HOST, MAC, ARN, CARD, PHONE,
+// USER, PATH) are excluded — those routinely show up inside random base64
+// IDs and would balloon false positives for the decode-verify gate.
+func innerHasSensitive(matches []Match) bool {
+	for _, m := range matches {
+		switch m.Kind {
+		case KindPassword, KindAPIKey, KindToken, KindPrivKey:
+			return true
+		}
+	}
+	return false
 }
 
 func overlapsAny(start, end int, covered []interval) bool {

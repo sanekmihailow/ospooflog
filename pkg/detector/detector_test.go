@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"encoding/base64"
 	"regexp"
 	"testing"
 )
@@ -517,6 +518,101 @@ func TestBasicAuth_DetectsBase64Credentials(t *testing.T) {
 		}
 		if !hit {
 			t.Errorf("%s: want APIKEY match in %q, none (matches=%+v)", tc.name, tc.text, matches)
+		}
+	}
+}
+
+func TestK8sSecret_DetectsIndentedValue(t *testing.T) {
+	// Realistic K8s/Helm Secret YAML — captures the b64 value while leaving
+	// the indent + key visible.
+	b64 := cycled("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 60)
+	text := "apiVersion: v1\ndata:\n  release: " + b64 + "\nkind: Secret"
+	matches := New(DefaultRules()).Find(text)
+	var got string
+	for _, m := range matches {
+		if m.Kind == KindAPIKey && m.Value == b64 {
+			got = m.Value
+			break
+		}
+	}
+	if got != b64 {
+		t.Errorf("want K8s secret value captured, got %q (matches=%+v)", got, matches)
+	}
+}
+
+func TestK8sSecret_HugeBase64(t *testing.T) {
+	// Multi-KB base64 (Helm release blob shape). Verifies the {40,} regex
+	// has no upper bound and the rule handles huge single-line values
+	// without truncation.
+	b64 := cycled("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 8192)
+	text := "data:\n  release: " + b64 + "\nkind: Secret"
+	matches := New(DefaultRules()).Find(text)
+	for _, m := range matches {
+		if m.Kind == KindAPIKey && m.Value == b64 {
+			return
+		}
+	}
+	t.Errorf("want huge K8s secret value captured (8192 b64 chars), did not find it in %d matches", len(matches))
+}
+
+func TestB64EnvVar_DetectsB64Suffix(t *testing.T) {
+	value := cycled("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/", 30)
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"_B64-suffix", "DB_PASSWORD_B64=" + value},
+		{"_BASE64-suffix", "TLS_CERT_BASE64=" + value},
+		{"lowercase-suffix", "config_b64=" + value},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var hit bool
+		for _, m := range matches {
+			if m.Kind == KindAPIKey {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			t.Errorf("%s: want APIKEY match in %q, none (matches=%+v)", tc.name, tc.text, matches)
+		}
+	}
+}
+
+func TestGenericB64_AggressiveDecodeVerify(t *testing.T) {
+	sensitive := base64.StdEncoding.EncodeToString([]byte("password=hunter2_real_credential_data"))
+	innocuous := base64.StdEncoding.EncodeToString([]byte("just a long string with no credentials inside at all"))
+
+	countValue := func(matches []Match, want string) int {
+		n := 0
+		for _, m := range matches {
+			if m.Value == want {
+				n++
+			}
+		}
+		return n
+	}
+
+	// Default mode never decodes — neither blob gets masked, even though
+	// one of them hides a real password.
+	{
+		text := "log line " + sensitive + " continues"
+		if hits := countValue(New(DefaultRules()).Find(text), sensitive); hits != 0 {
+			t.Errorf("default mode should NOT mask generic b64, got %d hits", hits)
+		}
+	}
+	// Aggressive mode + decode-verify: sensitive blob caught, innocuous skipped.
+	{
+		text := "log line " + sensitive + " continues"
+		if hits := countValue(New(AggressiveRules()).Find(text), sensitive); hits != 1 {
+			t.Errorf("aggressive mode should mask b64 with credentials inside, got %d hits", hits)
+		}
+	}
+	{
+		text := "log line " + innocuous + " continues"
+		if hits := countValue(New(AggressiveRules()).Find(text), innocuous); hits != 0 {
+			t.Errorf("aggressive mode should NOT mask b64 without credentials, got %d hits", hits)
 		}
 	}
 }
