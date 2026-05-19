@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"regexp"
 	"testing"
 )
 
@@ -504,6 +505,115 @@ func TestEmpty(t *testing.T) {
 	matches := New(DefaultRules()).Find("")
 	if len(matches) != 0 {
 		t.Errorf("empty text should yield no matches, got %+v", matches)
+	}
+}
+
+func TestMinEntropy_FiltersLowEntropyCaptures(t *testing.T) {
+	rule := Rule{
+		Kind:         "TEST",
+		Re:           regexp.MustCompile(`token=(\S+)`),
+		CaptureGroup: 1,
+		MinEntropy:   2.0,
+	}
+	cases := []struct {
+		text string
+		want int
+	}{
+		// Single repeated char — entropy 0
+		{"token=AAAAAAAA", 0},
+		// 2-unique-char alternation — entropy 1.0
+		{"token=ababab", 0},
+		// Mixed varied chars — entropy >2.0
+		{"token=AbC3xY9zQ", 1},
+	}
+	for _, tc := range cases {
+		got := New([]Rule{rule}).Find(tc.text)
+		if len(got) != tc.want {
+			t.Errorf("text=%q: want %d matches, got %d (%+v)", tc.text, tc.want, len(got), got)
+		}
+	}
+}
+
+func TestPassword_FiltersPlaceholderValues(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		// Repeated-char placeholders the entropy floor should drop
+		{"password=xxxxxxxxxxxx", false},
+		{"passwd: AAAAAAAA", false},
+		// Real-shaped passwords stay
+		{"password=hunter2", true},
+		{"password=S3cr3t!Pass", true},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var hit bool
+		for _, m := range matches {
+			if m.Kind == KindPassword {
+				hit = true
+				break
+			}
+		}
+		if hit != tc.want {
+			t.Errorf("text=%q: want hit=%v, got %v (matches=%+v)", tc.text, tc.want, hit, matches)
+		}
+	}
+}
+
+func TestPlaceholder_SkipsTemplateAndStandIns(t *testing.T) {
+	cases := []struct {
+		text string
+		kind EntityKind
+		want bool // true = expect a match of `kind`
+	}{
+		// Template / variable interpolation
+		{"password=${DB_PASSWORD}", KindPassword, false},
+		{"password=$DB_PASSWORD", KindPassword, false},
+		{"api_key={{API_KEY}}", KindAPIKey, false},
+		{"secret=%(secret_value)s", KindAPIKey, false},
+		// Doc-style placeholders
+		{"password=<your-password>", KindPassword, false},
+		{"Authorization: Bearer <token>", KindAPIKey, false},
+		// Common placeholder words
+		{"password=changeme", KindPassword, false},
+		{"password=placeholder", KindPassword, false},
+		{"password=default", KindPassword, false},
+		// "your-*" prefix
+		{"password=your-token-here", KindPassword, false},
+		{"password=your_secret_here", KindPassword, false},
+		// Re-mask guard — our own fakes should pass through
+		{"password=FAKE_PWD_3", KindPassword, false},
+		{"user=FAKE_USER_1", KindUser, false},
+		// Real-shaped values still match
+		{"password=R3al!Secret9", KindPassword, true},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var hit bool
+		for _, m := range matches {
+			if m.Kind == tc.kind {
+				hit = true
+				break
+			}
+		}
+		if hit != tc.want {
+			t.Errorf("text=%q kind=%s: want hit=%v, got %v (matches=%+v)", tc.text, tc.kind, tc.want, hit, matches)
+		}
+	}
+}
+
+func TestKeyword_SkipsRegexWhenAbsent(t *testing.T) {
+	rule := Rule{
+		Kind:    "TEST",
+		Re:      regexp.MustCompile(`\bhello\b`),
+		Keyword: "ZZZ",
+	}
+	if got := New([]Rule{rule}).Find("hello world"); len(got) != 0 {
+		t.Errorf("keyword absent: want 0 matches, got %d (%+v)", len(got), got)
+	}
+	if got := New([]Rule{rule}).Find("ZZZ hello world"); len(got) != 1 {
+		t.Errorf("keyword present: want 1 match, got %d (%+v)", len(got), got)
 	}
 }
 

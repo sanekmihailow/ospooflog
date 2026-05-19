@@ -7,8 +7,10 @@
 package detector
 
 import (
+	"math"
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // EntityKind tags the type of a detected sensitive value. The kind drives
@@ -87,6 +89,16 @@ type Rule struct {
 	// (e.g. a httpd line prefix) to locate the value, but the anchor itself
 	// contains other entities that other rules must still be free to detect.
 	BlockCaptureOnly bool
+	// Keyword is an optional literal substring that must appear in the input
+	// before the regex is evaluated. Cheap pre-filter for rules anchored on
+	// a fixed token like "AIza", "sk-ant-", "T3BlbkFJ". Match is case-
+	// sensitive — set it in the casing the regex actually requires.
+	Keyword string
+	// MinEntropy rejects captures whose Shannon entropy (bits-per-char over
+	// byte alphabet) falls below the threshold. Filters repeating placeholders
+	// like "AAAAAAAA" / "xxxxxxxx" and short trivial values like "true"
+	// without needing a giant string allowlist. Zero disables the check.
+	MinEntropy float64
 }
 
 // Chain runs Rules in order with a covered-range guard.
@@ -107,6 +119,9 @@ func (c *Chain) Find(text string) []Match {
 		covered []interval
 	)
 	for _, rule := range c.rules {
+		if rule.Keyword != "" && !strings.Contains(text, rule.Keyword) {
+			continue
+		}
 		idxs := rule.Re.FindAllStringSubmatchIndex(text, -1)
 		subs := rule.Re.FindAllStringSubmatch(text, -1)
 		for i, idx := range idxs {
@@ -132,6 +147,12 @@ func (c *Chain) Find(text string) []Match {
 			if rule.Validate != nil && !rule.Validate(value) {
 				continue
 			}
+			if rule.MinEntropy > 0 && shannonEntropy(value) < rule.MinEntropy {
+				continue
+			}
+			if isPlaceholder(value) {
+				continue
+			}
 
 			if rule.Skip {
 				covered = append(covered, interval{blockStart, blockEnd})
@@ -155,6 +176,84 @@ func (c *Chain) Find(text string) []Match {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Start < results[j].Start })
 	return results
+}
+
+// placeholderPatterns reject captures that are obvious stand-ins rather than
+// real sensitive data. Applied after Validate / MinEntropy gates. Covers
+// shell/template interpolation (`$VAR`, `${VAR}`, `{{x}}`, `%(x)s`, `%{x}`),
+// doc placeholders (`<your-token>`), and re-runs over our own fake output
+// (`FAKE_PWD_3`).
+var placeholderPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`),
+	regexp.MustCompile(`^\{\{[^}]*\}\}$`),
+	regexp.MustCompile(`^%\([^)]+\)s?$`),
+	regexp.MustCompile(`^%\{[^}]+\}$`),
+	regexp.MustCompile(`^<[^>]+>$`),
+	regexp.MustCompile(`^FAKE_[A-Z]+_\d+(?:_[A-Z0-9_]+)*$`),
+}
+
+// placeholderWords are common stand-in tokens (case-insensitive lookup) that
+// turn up in docs, config templates and examples but are never real secrets.
+// Stays focused — generic words like "name" / "id" / "this" live in
+// userStopWords because they're USER-rule specific.
+var placeholderWords = map[string]bool{
+	"changeme":    true,
+	"placeholder": true,
+	"example":     true,
+	"dummy":       true,
+	"redacted":    true,
+	"default":     true,
+	"test":        true,
+	"demo":        true,
+	"true":        true,
+	"false":       true,
+	"yes":         true,
+	"no":          true,
+	"null":        true,
+	"none":        true,
+	"nil":         true,
+	"n/a":         true,
+}
+
+// isPlaceholder returns true if value is clearly a stand-in (template var,
+// doc placeholder, our own previously-emitted fake) and should be left alone.
+func isPlaceholder(s string) bool {
+	low := strings.ToLower(s)
+	if placeholderWords[low] {
+		return true
+	}
+	if strings.HasPrefix(low, "your-") || strings.HasPrefix(low, "your_") {
+		return true
+	}
+	for _, re := range placeholderPatterns {
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	return false
+}
+
+// shannonEntropy returns bits-per-char over the byte alphabet. Treats input
+// as bytes — works for ASCII and UTF-8 alike since the goal is to detect
+// low-variety strings ("AAAAA", "xxxxxxxx"), not to characterise language.
+func shannonEntropy(s string) float64 {
+	if len(s) == 0 {
+		return 0
+	}
+	var freq [256]int
+	for i := 0; i < len(s); i++ {
+		freq[s[i]]++
+	}
+	n := float64(len(s))
+	h := 0.0
+	for _, c := range freq {
+		if c == 0 {
+			continue
+		}
+		p := float64(c) / n
+		h -= p * math.Log2(p)
+	}
+	return h
 }
 
 func overlapsAny(start, end int, covered []interval) bool {
