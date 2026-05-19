@@ -9,6 +9,7 @@ package detector
 import (
 	"regexp"
 	"sort"
+	"strings"
 )
 
 // EntityKind tags the type of a detected sensitive value. The kind drives
@@ -87,6 +88,11 @@ type Rule struct {
 	// (e.g. a httpd line prefix) to locate the value, but the anchor itself
 	// contains other entities that other rules must still be free to detect.
 	BlockCaptureOnly bool
+	// Keyword is an optional literal substring that must appear in the input
+	// before the regex is evaluated. Cheap pre-filter for rules anchored on
+	// a fixed token like "AIza", "sk-ant-", "T3BlbkFJ". Match is case-
+	// sensitive — set it in the casing the regex actually requires.
+	Keyword string
 }
 
 // Chain runs Rules in order with a covered-range guard.
@@ -107,6 +113,9 @@ func (c *Chain) Find(text string) []Match {
 		covered []interval
 	)
 	for _, rule := range c.rules {
+		if rule.Keyword != "" && !strings.Contains(text, rule.Keyword) {
+			continue
+		}
 		idxs := rule.Re.FindAllStringSubmatchIndex(text, -1)
 		subs := rule.Re.FindAllStringSubmatch(text, -1)
 		for i, idx := range idxs {
