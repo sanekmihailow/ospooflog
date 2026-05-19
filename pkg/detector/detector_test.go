@@ -508,6 +508,59 @@ func TestEmpty(t *testing.T) {
 	}
 }
 
+func TestMinEntropy_FiltersLowEntropyCaptures(t *testing.T) {
+	rule := Rule{
+		Kind:         "TEST",
+		Re:           regexp.MustCompile(`token=(\S+)`),
+		CaptureGroup: 1,
+		MinEntropy:   2.0,
+	}
+	cases := []struct {
+		text string
+		want int
+	}{
+		// Single repeated char — entropy 0
+		{"token=AAAAAAAA", 0},
+		// 2-unique-char alternation — entropy 1.0
+		{"token=ababab", 0},
+		// Mixed varied chars — entropy >2.0
+		{"token=AbC3xY9zQ", 1},
+	}
+	for _, tc := range cases {
+		got := New([]Rule{rule}).Find(tc.text)
+		if len(got) != tc.want {
+			t.Errorf("text=%q: want %d matches, got %d (%+v)", tc.text, tc.want, len(got), got)
+		}
+	}
+}
+
+func TestPassword_FiltersPlaceholderValues(t *testing.T) {
+	cases := []struct {
+		text string
+		want bool
+	}{
+		// Repeated-char placeholders the entropy floor should drop
+		{"password=xxxxxxxxxxxx", false},
+		{"passwd: AAAAAAAA", false},
+		// Real-shaped passwords stay
+		{"password=hunter2", true},
+		{"password=S3cr3t!Pass", true},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var hit bool
+		for _, m := range matches {
+			if m.Kind == KindPassword {
+				hit = true
+				break
+			}
+		}
+		if hit != tc.want {
+			t.Errorf("text=%q: want hit=%v, got %v (matches=%+v)", tc.text, tc.want, hit, matches)
+		}
+	}
+}
+
 func TestKeyword_SkipsRegexWhenAbsent(t *testing.T) {
 	rule := Rule{
 		Kind:    "TEST",
