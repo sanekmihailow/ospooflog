@@ -145,8 +145,9 @@ var (
 	// GitHub tokens: ghp_ (PAT), gho_ (OAuth), ghu_ (user-to-server),
 	// ghs_ (server-to-server), ghr_ (refresh).
 	reGitHubToken = regexp.MustCompile(`\bgh[posur]_[A-Za-z0-9]{36,}\b`)
-	// Slack tokens: xox[abprs]-… (bot/app/user/refresh/legacy).
-	reSlackToken = regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`)
+	// Slack tokens: xox[abeprs]-… (bot/app/user/refresh/legacy/external).
+	// "e" covers the xoxe- shape used for refresh and external tokens.
+	reSlackToken = regexp.MustCompile(`\bxox[abeprs]-[A-Za-z0-9-]{10,}\b`)
 
 	// Anthropic API / admin keys. The trailing "AA" is a stable terminator
 	// in all currently-issued keys; the 93-char body is base64url-safe.
@@ -162,6 +163,35 @@ var (
 	reStripeKey = regexp.MustCompile(`\b(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{10,99}\b`)
 	// GitLab personal / project / group access tokens.
 	reGitLabToken = regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20}\b`)
+	// npm access token — "npm_" + 36 hex chars. Real automation/publish
+	// tokens are hex-only; mixed-case tokens are legacy and rarely seen now.
+	reNpmToken = regexp.MustCompile(`\bnpm_[a-f0-9]{36}\b`)
+	// Hugging Face user access token — "hf_" + 34+ alphanumeric chars.
+	// Length floor matches empirical observation; HF docs only specify the
+	// prefix, real tokens land at 37 chars but we leave headroom.
+	reHFToken = regexp.MustCompile(`\bhf_[a-zA-Z0-9]{34,}\b`)
+	// Databricks API token — "dapi" + 32 hex chars + optional "-N" shard
+	// suffix used by workspace-bound tokens.
+	reDatabricksToken = regexp.MustCompile(`\bdapi[a-f0-9]{32}(?:-\d)?\b`)
+	// Doppler personal token — "dp.pt." + 43 alphanumeric chars.
+	reDopplerToken = regexp.MustCompile(`\bdp\.pt\.[a-zA-Z0-9]{43}\b`)
+	// DigitalOcean tokens — common shape across PAT (dop), OAuth (doo) and
+	// refresh (dor) variants: "do[opr]_v1_" + 64 hex chars.
+	reDOToken = regexp.MustCompile(`\bdo[opr]_v1_[a-f0-9]{64}\b`)
+	// Dynatrace API token — "dt0c01." + 24 alphanumeric + "." + 64
+	// alphanumeric. Two-segment structure encodes tenant and credential.
+	reDynatraceToken = regexp.MustCompile(`\bdt0c01\.[a-zA-Z0-9]{24}\.[a-zA-Z0-9]{64}\b`)
+	// age secret key — "AGE-SECRET-KEY-1" + 58 Bech32 (uppercase) chars.
+	// Bech32 alphabet excludes B, I, O, 1 (visually ambiguous in the
+	// canonical lowercase form); the uppercase form is what age emits.
+	reAgeSecretKey = regexp.MustCompile(`\bAGE-SECRET-KEY-1[023456789ACDEFGHJKLMNPQRSTUVWXYZ]{58}\b`)
+	// Alibaba Cloud access key ID — "LTAI" + 20 alphanumeric chars.
+	// Distinct from AWS AKIA (base32, 16 chars) by both prefix and alphabet.
+	reAlibabaAK = regexp.MustCompile(`\bLTAI[a-zA-Z0-9]{20}\b`)
+	// HTTP Basic Authorization — captures the base64 blob after "Basic ".
+	// Mirrors reBearerToken — both can appear with or without the literal
+	// "Authorization:" header prefix in the same log line.
+	reBasicAuth = regexp.MustCompile(`(?i)(?:Authorization:\s*)?Basic\s+([A-Za-z0-9+/=]{16,})`)
 
 	// Credit-card number: 13–19 digits with optional space/dash separators
 	// between any two digits. Lookahead/lookbehind isn't supported in RE2,
@@ -448,8 +478,17 @@ func DefaultRules() []Rule {
 		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
 		{Kind: KindAPIKey, Re: reOpenAIKey, Keyword: "T3BlbkFJ"},
 		{Kind: KindAPIKey, Re: reGoogleAPIKey, Keyword: "AIza"},
+		{Kind: KindAPIKey, Re: reNpmToken, Keyword: "npm_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHFToken, Keyword: "hf_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDatabricksToken, Keyword: "dapi", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDopplerToken, Keyword: "dp.pt.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDOToken, Keyword: "_v1_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDynatraceToken, Keyword: "dt0c01.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAgeSecretKey, Keyword: "AGE-SECRET-KEY-1", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAlibabaAK, Keyword: "LTAI", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser, Keyword: "'@'"},
@@ -500,8 +539,17 @@ func AggressiveRules() []Rule {
 		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
 		{Kind: KindAPIKey, Re: reOpenAIKey, Keyword: "T3BlbkFJ"},
 		{Kind: KindAPIKey, Re: reGoogleAPIKey, Keyword: "AIza"},
+		{Kind: KindAPIKey, Re: reNpmToken, Keyword: "npm_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHFToken, Keyword: "hf_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDatabricksToken, Keyword: "dapi", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDopplerToken, Keyword: "dp.pt.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDOToken, Keyword: "_v1_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDynatraceToken, Keyword: "dt0c01.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAgeSecretKey, Keyword: "AGE-SECRET-KEY-1", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAlibabaAK, Keyword: "LTAI", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser, Keyword: "'@'"},
