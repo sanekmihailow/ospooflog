@@ -452,6 +452,101 @@ func repeat(s string, n int) string {
 	return string(out)
 }
 
+// cycled emits n chars cycled through set — gives uniform distribution and
+// keeps test token entropy above the rules' MinEntropy floors.
+func cycled(set string, n int) string {
+	b := make([]byte, n)
+	for i := 0; i < n; i++ {
+		b[i] = set[i%len(set)]
+	}
+	return string(b)
+}
+
+func hexN(n int) string      { return cycled("0123456789abcdef", n) }
+func alphanumN(n int) string { return cycled("abcdefghijklmnopqrstuvwxyz0123456789", n) }
+func bech32UN(n int) string  { return cycled("023456789ACDEFGHJKLMNPQRSTUVWXYZ", n) }
+
+func TestAPIKey_NewProviderTokens(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"npm", "npm_" + hexN(36)},
+		{"hf", "hf_" + alphanumN(34)},
+		{"databricks", "dapi" + hexN(32)},
+		{"databricks-shard", "dapi" + hexN(32) + "-1"},
+		{"doppler", "dp.pt." + alphanumN(43)},
+		{"do-pat", "dop_v1_" + hexN(64)},
+		{"do-oauth", "doo_v1_" + hexN(64)},
+		{"do-refresh", "dor_v1_" + hexN(64)},
+		{"dynatrace", "dt0c01." + alphanumN(24) + "." + alphanumN(64)},
+		{"age", "AGE-SECRET-KEY-1" + bech32UN(58)},
+		{"alibaba", "LTAI" + alphanumN(20)},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got []string
+		for _, m := range matches {
+			if m.Kind == KindAPIKey {
+				got = append(got, m.Value)
+			}
+		}
+		if len(got) != 1 {
+			t.Errorf("%s: want exactly 1 APIKEY match in %q, got %d (matches=%+v)", tc.name, tc.text, len(got), matches)
+		}
+	}
+}
+
+func TestBasicAuth_DetectsBase64Credentials(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{"with-header", "Authorization: Basic dXNlcjpwYXNzd29yZDEyMzQ="},
+		{"bare", "Basic dXNlcjpwYXNzd29yZDEyMzQ="},
+		{"case-insensitive", "authorization: BASIC dXNlcjpwYXNzd29yZDEyMzQ="},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var hit bool
+		for _, m := range matches {
+			if m.Kind == KindAPIKey {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			t.Errorf("%s: want APIKEY match in %q, none (matches=%+v)", tc.name, tc.text, matches)
+		}
+	}
+}
+
+func TestSlackToken_ExtendedClass(t *testing.T) {
+	// xoxe- covers refresh / external; the rest are regression-checks for
+	// existing variants kept after extending the char class to include 'e'.
+	cases := []string{
+		"xoxe-1234567890abcdef",
+		"xoxa-1234567890abcdef",
+		"xoxb-1234567890abcdef",
+		"xoxp-1234567890abcdef",
+		"xoxr-1234567890abcdef",
+		"xoxs-1234567890abcdef",
+	}
+	for _, text := range cases {
+		matches := New(DefaultRules()).Find(text)
+		var got string
+		for _, m := range matches {
+			if m.Kind == KindAPIKey {
+				got = m.Value
+				break
+			}
+		}
+		if got != text {
+			t.Errorf("text=%q: want APIKEY match equal to text, got %q (matches=%+v)", text, got, matches)
+		}
+	}
+}
+
 func TestOCIDigest(t *testing.T) {
 	text := "pulled image@sha256:5b0bcabd1ed22e9fb1310cf6c2dec7cdef19f0ad69efa1f392e94a4333501270 ok"
 	matches := New(DefaultRules()).Find(text)
