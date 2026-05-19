@@ -561,6 +561,48 @@ func TestPassword_FiltersPlaceholderValues(t *testing.T) {
 	}
 }
 
+func TestPlaceholder_SkipsTemplateAndStandIns(t *testing.T) {
+	cases := []struct {
+		text string
+		kind EntityKind
+		want bool // true = expect a match of `kind`
+	}{
+		// Template / variable interpolation
+		{"password=${DB_PASSWORD}", KindPassword, false},
+		{"password=$DB_PASSWORD", KindPassword, false},
+		{"api_key={{API_KEY}}", KindAPIKey, false},
+		{"secret=%(secret_value)s", KindAPIKey, false},
+		// Doc-style placeholders
+		{"password=<your-password>", KindPassword, false},
+		{"Authorization: Bearer <token>", KindAPIKey, false},
+		// Common placeholder words
+		{"password=changeme", KindPassword, false},
+		{"password=placeholder", KindPassword, false},
+		{"password=default", KindPassword, false},
+		// "your-*" prefix
+		{"password=your-token-here", KindPassword, false},
+		{"password=your_secret_here", KindPassword, false},
+		// Re-mask guard — our own fakes should pass through
+		{"password=FAKE_PWD_3", KindPassword, false},
+		{"user=FAKE_USER_1", KindUser, false},
+		// Real-shaped values still match
+		{"password=R3al!Secret9", KindPassword, true},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var hit bool
+		for _, m := range matches {
+			if m.Kind == tc.kind {
+				hit = true
+				break
+			}
+		}
+		if hit != tc.want {
+			t.Errorf("text=%q kind=%s: want hit=%v, got %v (matches=%+v)", tc.text, tc.kind, tc.want, hit, matches)
+		}
+	}
+}
+
 func TestKeyword_SkipsRegexWhenAbsent(t *testing.T) {
 	rule := Rule{
 		Kind:    "TEST",

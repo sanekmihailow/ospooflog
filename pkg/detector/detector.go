@@ -150,6 +150,9 @@ func (c *Chain) Find(text string) []Match {
 			if rule.MinEntropy > 0 && shannonEntropy(value) < rule.MinEntropy {
 				continue
 			}
+			if isPlaceholder(value) {
+				continue
+			}
 
 			if rule.Skip {
 				covered = append(covered, interval{blockStart, blockEnd})
@@ -173,6 +176,61 @@ func (c *Chain) Find(text string) []Match {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Start < results[j].Start })
 	return results
+}
+
+// placeholderPatterns reject captures that are obvious stand-ins rather than
+// real sensitive data. Applied after Validate / MinEntropy gates. Covers
+// shell/template interpolation (`$VAR`, `${VAR}`, `{{x}}`, `%(x)s`, `%{x}`),
+// doc placeholders (`<your-token>`), and re-runs over our own fake output
+// (`FAKE_PWD_3`).
+var placeholderPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$`),
+	regexp.MustCompile(`^\{\{[^}]*\}\}$`),
+	regexp.MustCompile(`^%\([^)]+\)s?$`),
+	regexp.MustCompile(`^%\{[^}]+\}$`),
+	regexp.MustCompile(`^<[^>]+>$`),
+	regexp.MustCompile(`^FAKE_[A-Z]+_\d+(?:_[A-Z0-9_]+)*$`),
+}
+
+// placeholderWords are common stand-in tokens (case-insensitive lookup) that
+// turn up in docs, config templates and examples but are never real secrets.
+// Stays focused — generic words like "name" / "id" / "this" live in
+// userStopWords because they're USER-rule specific.
+var placeholderWords = map[string]bool{
+	"changeme":    true,
+	"placeholder": true,
+	"example":     true,
+	"dummy":       true,
+	"redacted":    true,
+	"default":     true,
+	"test":        true,
+	"demo":        true,
+	"true":        true,
+	"false":       true,
+	"yes":         true,
+	"no":          true,
+	"null":        true,
+	"none":        true,
+	"nil":         true,
+	"n/a":         true,
+}
+
+// isPlaceholder returns true if value is clearly a stand-in (template var,
+// doc placeholder, our own previously-emitted fake) and should be left alone.
+func isPlaceholder(s string) bool {
+	low := strings.ToLower(s)
+	if placeholderWords[low] {
+		return true
+	}
+	if strings.HasPrefix(low, "your-") || strings.HasPrefix(low, "your_") {
+		return true
+	}
+	for _, re := range placeholderPatterns {
+		if re.MatchString(s) {
+			return true
+		}
+	}
+	return false
 }
 
 // shannonEntropy returns bits-per-char over the byte alphabet. Treats input
