@@ -1,6 +1,7 @@
 package detector
 
 import (
+	"regexp"
 	"testing"
 )
 
@@ -504,6 +505,20 @@ func TestEmpty(t *testing.T) {
 	matches := New(DefaultRules()).Find("")
 	if len(matches) != 0 {
 		t.Errorf("empty text should yield no matches, got %+v", matches)
+	}
+}
+
+func TestKeyword_SkipsRegexWhenAbsent(t *testing.T) {
+	rule := Rule{
+		Kind:    "TEST",
+		Re:      regexp.MustCompile(`\bhello\b`),
+		Keyword: "ZZZ",
+	}
+	if got := New([]Rule{rule}).Find("hello world"); len(got) != 0 {
+		t.Errorf("keyword absent: want 0 matches, got %d (%+v)", len(got), got)
+	}
+	if got := New([]Rule{rule}).Find("ZZZ hello world"); len(got) != 1 {
+		t.Errorf("keyword present: want 1 match, got %d (%+v)", len(got), got)
 	}
 }
 
