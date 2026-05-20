@@ -392,6 +392,131 @@ func TestFQDN_RejectsSourceFileExtensions(t *testing.T) {
 	}
 }
 
+func TestFQDN_RejectsArpaAndSystemdSuffixes(t *testing.T) {
+	// .arpa is the DNS-infrastructure TLD (in-addr.arpa, ip6.arpa) and
+	// .service / .target / .network etc. are systemd unit type
+	// extensions that happen to share TLD shape. Both must be skipped.
+	cases := []string{
+		"Negative trust anchors: home.arpa 10.in-addr.arpa 168.192.in-addr.arpa",
+		"d.f.ip6.arpa noted",
+		"Reached target local-fs-pre.target - Preparation",
+		"systemd[1]: ssh.service: Started",
+		"matching network '/run/systemd/network/10-netplan-eth0.network'",
+		"ConditionPathExists=/dev/sda.device",
+	}
+	for _, text := range cases {
+		matches := New(DefaultRules()).Find(text)
+		if c := findKinds(matches); c[KindFQDN] != 0 {
+			t.Errorf("text=%q: expected 0 FQDN matches, got %d (matches=%+v)", text, c[KindFQDN], matches)
+		}
+	}
+}
+
+func TestFQDN_PreservesPublicDomainsAndSubdomains(t *testing.T) {
+	// Public software / OS / registry domains in protectedValues, plus
+	// their subdomains via the "*.<domain>" suffix matcher.
+	cases := []struct {
+		text string
+		preserve string
+	}{
+		{"image pulled from docker.io/library/nginx", "docker.io"},
+		{"helm repo: cattle.io/charts", "cattle.io"},
+		{"see https://api.github.com/repos/foo/bar", "api.github.com"}, // subdomain — github.com itself isn't in the list but kept here as a no-mask sanity check
+		{"k8s.io/client-go/tools/cache", "k8s.io"},
+		{"registry.k8s.io/pause:3.9", "registry.k8s.io"},
+		{"reach eu.gcr.io for the image", "eu.gcr.io"},
+		{"kernel from kernel.org", "kernel.org"},
+	}
+	for _, tc := range cases {
+		out := New(DefaultRules()).Find(tc.text)
+		for _, m := range out {
+			if m.Kind == KindFQDN && strings.EqualFold(m.Value, tc.preserve) {
+				t.Errorf("text=%q: public domain %q was masked", tc.text, tc.preserve)
+			}
+		}
+	}
+}
+
+func TestEmail_RejectsGoModulePathsAndKernelCreditDomains(t *testing.T) {
+	// Email regex tries to grab "client-go@v1.33.6-k3s1" out of a Go
+	// module path. validEmail now requires a real IANA TLD so any tail
+	// that isn't .com / .org / etc. is rejected. dm-devel@redhat.com is
+	// preserved via the domain-half check in isProtectedValue.
+	cases := []struct {
+		text string
+		expectEmail bool
+	}{
+		{`reflector="k8s.io/client-go@v1.33.6-k3s1/tools/cache/reflector.go:285"`, false},
+		{"initialised: dm-devel@redhat.com - kernel boot", false},
+		{"contact: alice@corp.com for access", true},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		hit := false
+		for _, m := range matches {
+			if m.Kind == KindEmail {
+				hit = true
+				break
+			}
+		}
+		if hit != tc.expectEmail {
+			t.Errorf("text=%q: want EMAIL=%v, got %v (matches=%+v)", tc.text, tc.expectEmail, hit, matches)
+		}
+	}
+}
+
+func TestPassword_RejectsSudoPWDPath(t *testing.T) {
+	// "PWD=/home/system" in sudo logs is the present working directory,
+	// not a password. validPassword rejects values starting with /.
+	cases := []struct {
+		text string
+		expectPwd bool
+	}{
+		{"sudo: PWD=/home/system ; USER=root", false},
+		{"pwd=C:\\Users\\Alice ; foo", false},
+		{"password=hunter2", true},
+		{"passwd: S3cr3t!Pass", true},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var hit bool
+		for _, m := range matches {
+			if m.Kind == KindPassword {
+				hit = true
+				break
+			}
+		}
+		if hit != tc.expectPwd {
+			t.Errorf("text=%q: want PWD=%v, got %v (matches=%+v)", tc.text, tc.expectPwd, hit, matches)
+		}
+	}
+}
+
+func TestPlaceholder_AnsibleNotLoggingParameter(t *testing.T) {
+	// Ansible substitutes "NOT_LOGGING_PARAMETER" for any value with
+	// no_log:true (passwords, passphrases). Must not be masked.
+	text := "ansible: password=NOT_LOGGING_PARAMETER state=present ssh_key_passphrase=NOT_LOGGING_PARAMETER"
+	matches := New(DefaultRules()).Find(text)
+	for _, m := range matches {
+		if m.Value == "NOT_LOGGING_PARAMETER" {
+			t.Errorf("NOT_LOGGING_PARAMETER (Ansible literal) should be left alone, got match: %+v", m)
+		}
+	}
+}
+
+func TestProtectedValues_K8sVolumeSlugSuffix(t *testing.T) {
+	// k8s kubelet mount names embed the volume label via hyphen, not
+	// dot: "<pod-uid-hex>-volumes-kubernetes.io". The slug-suffix
+	// matcher protects the whole identifier.
+	text := `systemd[1]: var-lib-kubelet-pods-06ffcef5-volumes-kubernetes.io-projected.mount: Deactivated.`
+	matches := New(DefaultRules()).Find(text)
+	for _, m := range matches {
+		if m.Kind == KindFQDN && strings.HasSuffix(m.Value, "volumes-kubernetes.io") {
+			t.Errorf("k8s volume slug %q should be preserved, got match: %+v", m.Value, m)
+		}
+	}
+}
+
 func TestUUID(t *testing.T) {
 	text := "trace 550e8400-e29b-41d4-a716-446655440000 done"
 	matches := New(DefaultRules()).Find(text)
