@@ -9,6 +9,45 @@ import (
 	"strings"
 )
 
+// protectedValues are literal token values that no rule should mask —
+// real common identifiers (localhost, root, mysql) that aren't secrets
+// but get captured by generic HOST / USER / FQDN rules. Checked AFTER
+// a rule's capture step in detector.Find: if value (case-insensitive)
+// is in this set, the Match is dropped without claiming any byte range.
+// Other rules whose match span overlaps the value are unaffected, so
+// patterns like 'vtiger_user'@'localhost' still get vtiger_user masked.
+//
+// Layering with --overrides:
+//
+//   user --overrides         hides origins with NUL placeholders pre-detection
+//     ↓
+//   protectedValues (this)   drops Match post-validate if value is in set
+//     ↓
+//   detection rules          regular obfuscation
+//
+// Overrides win because the override pre-pass runs before the detector
+// sees the text — the value has been rewritten to a placeholder and is
+// no longer in the input when this filter runs.
+var protectedValues = map[string]bool{
+	"localhost": true,
+	"mysql":     true,
+	"root":      true,
+	"system":    true,
+}
+
+// reSystemdUserPAM is a Skip-rule pattern: "systemd-user:" is a PAM
+// service identifier (in lines like "pam_unix(systemd-user:session)"),
+// not a "user:" assignment. Without this, reUserConservative reads the
+// trailing "user:" as the keyword and captures the next token ("session"
+// / "auth" / "account") as a username. The Skip-rule consumes the
+// "systemd-user:" range so reUserConservative's match overlaps with
+// covered → it gets skipped.
+//
+// Note: this is the only context-level (not value-level) entry in our
+// protection scheme. The value-level filter above can't handle this
+// case because the captured value is "session", not "systemd-user".
+var reSystemdUserPAM = regexp.MustCompile(`\bsystemd-user:`)
+
 var (
 	reDSN   = regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?|amqps?|kafka)://[^\s"'<>\x60]+`)
 	// AWS ARN: "arn:partition:service:region:account-id:resource". Region
@@ -425,7 +464,7 @@ var validTLDs = func() map[string]bool {
 			m[t] = true
 		}
 	}
-	for _, t := range []string{"so", "zip", "mov", "bar"} {
+	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh"} {
 		delete(m, t)
 	}
 	return m
@@ -440,11 +479,21 @@ func validFQDN(s string) bool {
 	return validTLDs[strings.ToLower(s[i+1:])]
 }
 
-// validEmail rejects matches that are actually SSH algorithm identifiers.
-// SSH names use openssh.com / libssh.org as a fake "domain" half (e.g.
-// "chacha20-poly1305@openssh.com", "curve25519-sha256@libssh.org") and the
-// RFC-shaped "<alg>-cert-v01@..." host-key identifiers — both are e-mail
-// shape but never user addresses. Cheaper than a domain allowlist.
+// systemdUnitSuffixes are the documented systemd unit type extensions.
+// A "<name>@<instance>.<suffix>" template-unit instance like
+// "modprobe@configfs.service" is email-shaped but never a user address.
+var systemdUnitSuffixes = map[string]bool{
+	"service": true, "target": true, "mount": true, "socket": true,
+	"timer": true, "path": true, "swap": true, "device": true,
+	"scope": true, "slice": true, "automount": true,
+}
+
+// validEmail rejects matches that are actually SSH algorithm identifiers
+// or systemd unit instances. SSH names use openssh.com / libssh.org as a
+// fake "domain" half (e.g. "chacha20-poly1305@openssh.com") and the
+// RFC-shaped "<alg>-cert-v01@..." host-key identifiers. systemd templates
+// shape "name@instance.<unit-type>" which trips reEmail because the unit
+// type acts as a TLD.
 func validEmail(s string) bool {
 	at := strings.LastIndexByte(s, '@')
 	if at <= 0 {
@@ -453,6 +502,11 @@ func validEmail(s string) bool {
 	domain := strings.ToLower(s[at+1:])
 	if domain == "openssh.com" || domain == "libssh.org" {
 		return false
+	}
+	if dot := strings.LastIndexByte(domain, '.'); dot >= 0 {
+		if systemdUnitSuffixes[domain[dot+1:]] {
+			return false
+		}
 	}
 	return !reSSHAlgLocalPart.MatchString(s[:at])
 }
@@ -702,6 +756,10 @@ func dsnExtra(sub []string) map[string]string {
 // Order is priority — first rule wins at any given byte range.
 func coreRules() []Rule {
 	return []Rule{
+		// systemd-user: PAM service prefix — see reSystemdUserPAM doc.
+		// Runs before reUserConservative to block the false "user:"
+		// keyword reading.
+		{Re: reSystemdUserPAM, Skip: true},
 		// PRIVKEY first — it spans newlines and embeds base64 that would
 		// otherwise be shredded by IP/UUID/etc.
 		{Kind: KindPrivKey, Re: rePEMPrivate, Keyword: "-----BEGIN"},
