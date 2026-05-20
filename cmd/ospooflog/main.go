@@ -30,8 +30,10 @@ type opts struct {
 	Input         string `short:"i" long:"input" description:"input file (default: stdin)"`
 	Output        string `short:"o" long:"output" description:"output file (default: stdout)"`
 	Session       string `short:"s" long:"session" description:"session file (required)" required:"true"`
-	Aggressive    bool   `long:"aggressive" description:"aggressive USER/HOST/PATH/PORT detection (more false positives)"`
-	StrictRestore bool   `long:"strict-restore" description:"word-boundary aware restore (slower, immune to substring traps)"`
+	Mode          string `long:"mode" description:"detection breadth: safe | balanced | aggressive" default:"safe"`
+	Aggressive    bool   `long:"aggressive" description:"deprecated alias for --mode aggressive"`
+	FastRestore   bool   `long:"fast-restore" description:"opt out of word-boundary aware restore (faster, but vulnerable to substring traps)"`
+	StrictRestore bool   `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
 	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or session"`
 	Overrides     string `long:"overrides" description:"YAML file with custom origin→replace pairs"`
 	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON and obfuscate string leaves (NDJSON)"`
@@ -62,6 +64,10 @@ func run(args []string) error {
 	}
 	if parser.Active == nil {
 		return errors.New("command required: obfuscate | restore | show")
+	}
+
+	if o.StrictRestore {
+		fmt.Fprintln(os.Stderr, "warning: --strict-restore is deprecated — strict restore is now the default; pass --fast-restore to opt out")
 	}
 
 	m := mapper.New(replacer.New())
@@ -96,10 +102,30 @@ func run(args []string) error {
 	}
 }
 
+// rulesForMode picks the detector ruleset for the requested mode.
+// --aggressive is honoured as a deprecated alias for --mode aggressive
+// (with a stderr warning) so older invocations don't break.
+func rulesForMode(mode string, deprecatedAggressive bool) ([]detector.Rule, error) {
+	if deprecatedAggressive {
+		fmt.Fprintln(os.Stderr, "warning: --aggressive is deprecated, use --mode aggressive instead")
+		mode = "aggressive"
+	}
+	switch mode {
+	case "", "safe":
+		return detector.DefaultRules(), nil
+	case "balanced":
+		return detector.BalancedRules(), nil
+	case "aggressive":
+		return detector.AggressiveRules(), nil
+	default:
+		return nil, fmt.Errorf("unknown --mode value: %q (want safe|balanced|aggressive)", mode)
+	}
+}
+
 func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
-	rules := detector.DefaultRules()
-	if o.Aggressive {
-		rules = detector.AggressiveRules()
+	rules, err := rulesForMode(o.Mode, o.Aggressive)
+	if err != nil {
+		return err
 	}
 	chain := detector.New(rules)
 
@@ -180,7 +206,7 @@ func runRestore(o opts, m *mapper.Mapper) error {
 		return fmt.Errorf("output: %w", err)
 	}
 	defer closeOut()
-	r := restorer.New(m, o.StrictRestore)
+	r := restorer.New(m, !o.FastRestore)
 	text = audithex.Restore(text, r)
 	result := r.Restore(text)
 	if _, err := out.Write([]byte(result)); err != nil {

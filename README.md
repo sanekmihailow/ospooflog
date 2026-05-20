@@ -184,11 +184,16 @@ ospooflog -s session.json show
   -o, --output       output file (default: stdout)
   -s, --session      session file (required)
 
-  --aggressive       wider USER/HOST/PATH/PORT detection — more matches,
-                     more false positives. Off by default.
-  --strict-restore   word-boundary aware restore. Slower, but immune to
-                     substring traps where a registered fake is a prefix
-                     of an unrelated string in the AI response.
+  --mode             detection breadth: safe (default) | balanced |
+                     aggressive. Higher levels catch more, with higher
+                     false-positive risk.
+  --aggressive       deprecated — alias for `--mode aggressive`.
+  --fast-restore     opt out of the default word-boundary aware restore.
+                     Faster, but vulnerable to substring traps where a
+                     registered fake is a prefix of an unrelated string
+                     in the AI response.
+  --strict-restore   deprecated — strict restore is now the default;
+                     pass `--fast-restore` to opt out.
   --dry-run          obfuscate: print detected matches without modifying
                      text or persisting the session.
   --overrides path   YAML file with fixed origin → replace pairs that win
@@ -201,29 +206,31 @@ ospooflog -s session.json show
 
 ## Examples
 
-### Conservative vs aggressive
+### Detection modes
 
-By default USER/HOST/PATH only fire in explicit contexts to keep false
-positives low — `user=alice` is captured but bare "alice" sitting in prose
-is not.
+`safe` (default) requires explicit context for USER / HOST / PATH —
+`user=alice` matches, bare `alice` in prose does not. `balanced` adds
+`as alice` / `for alice`, any 2-segment absolute path, and bare
+`:PORT` numbers. `aggressive` further adds single-label hostnames
+(`host=db-prod`) and a generic base64-decode-verify pass.
 
 ```sh
 echo "user=alice handled by alice's team" | ospooflog -s s.json obfuscate
 # user=user1 handled by alice's team
 
-echo "user=alice handled by alice's team" | ospooflog -s s.json --aggressive obfuscate
+echo "user=alice handled by alice's team" | ospooflog -s s.json --mode balanced obfuscate
 # user=user1 handled by user1's team    # "for/as <name>" patterns now match
 ```
 
-### Substring trap and `--strict-restore`
+### Substring trap (strict restore is on by default)
 
 ```sh
 # session has 192.168.1.1 ↔ 10.1.2.3
 echo "also try 192.168.1.10 instead" | ospooflog -s s.json restore
-# also try 10.1.2.30 instead              # broken — substring collision
+# also try 192.168.1.10 instead         # word-boundary check protects the AI's invented IP
 
-echo "also try 192.168.1.10 instead" | ospooflog -s s.json --strict-restore restore
-# also try 192.168.1.10 instead           # left alone — boundary check
+echo "also try 192.168.1.10 instead" | ospooflog -s s.json --fast-restore restore
+# also try 10.1.2.30 instead            # opt-in to fast restore — substring collision returns
 ```
 
 ### Custom replacements with `--overrides`
