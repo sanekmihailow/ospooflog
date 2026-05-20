@@ -297,6 +297,40 @@ func TestJWT(t *testing.T) {
 	}
 }
 
+func TestJWT_ExtraExtractsClaims(t *testing.T) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(
+		`{"email":"alice@corp.com","phone_number":"+14155552671","preferred_username":"alice","sub":"opaque-id-12345"}`))
+	sig := "dummysignature123"
+	jwt := header + "." + payload + "." + sig
+
+	matches := New(DefaultRules()).Find(jwt)
+	var jwtMatch *Match
+	for i := range matches {
+		if matches[i].Kind == KindToken {
+			jwtMatch = &matches[i]
+			break
+		}
+	}
+	if jwtMatch == nil {
+		t.Fatal("no JWT match found")
+	}
+	want := map[string]string{
+		"claim:" + string(KindEmail): "alice@corp.com",
+		"claim:" + string(KindPhone): "+14155552671",
+		"claim:" + string(KindUser):  "alice",
+	}
+	for k, v := range want {
+		if got := jwtMatch.Extra[k]; got != v {
+			t.Errorf("Extra[%q] = %q, want %q", k, got, v)
+		}
+	}
+	// sub is intentionally not registered as USER — too often an opaque IdP id.
+	if got, ok := jwtMatch.Extra["claim:"+string(KindUser)]; ok && got == "opaque-id-12345" {
+		t.Errorf("sub leaked into claim:USER: %q", got)
+	}
+}
+
 func TestIP6_RejectsTimestamps(t *testing.T) {
 	text := "2026-05-03 19:00:01 INFO ok at fe80::1 done"
 	matches := New(DefaultRules()).Find(text)
@@ -542,6 +576,11 @@ func TestAPIKey_NewProviderTokens(t *testing.T) {
 		{"postman", "PMAK-" + hexN(24) + "-" + hexN(34)},
 		{"sourcegraph", "sgp_" + alphanumN(44)},
 		{"airtable", "pat" + alphanumN(14) + "." + hexN(64)},
+		{"gcp-sa-key-id", `"private_key_id": "` + hexN(40) + `"`},
+		{"aws-secret-env", "AWS_SECRET_ACCESS_KEY=" + alphanumN(40)},
+		{"aws-session-env", "AWS_SESSION_TOKEN=" + alphanumN(40)},
+		{"aws-secret-json", `"SecretAccessKey": "` + alphanumN(40) + `"`},
+		{"aws-session-json", `"SessionToken": "` + alphanumN(40) + `"`},
 	}
 	for _, tc := range cases {
 		matches := New(DefaultRules()).Find(tc.text)

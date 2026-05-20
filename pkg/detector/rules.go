@@ -1,6 +1,8 @@
 package detector
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net"
 	"net/url"
 	"regexp"
@@ -332,6 +334,18 @@ var (
 	// No keyword pre-filter: "pat" is a common English substring; the
 	// pattern's strict structure (14 chars + dot + 64 hex) is the anchor.
 	reAirtablePAT = regexp.MustCompile(`\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b`)
+	// GCP service-account private_key_id field — the 40-hex id that
+	// fingerprints the key. The matching PEM private_key is already
+	// caught by rePEMPrivate; the client_email field is caught by
+	// reEmail. This rule covers the remaining sensitive piece of the
+	// SA JSON blob.
+	reGCPPrivateKeyId = regexp.MustCompile(`(?i)"private_key_id"\s*:\s*"([a-f0-9]{32,})"`)
+	// AWS session credentials — the secret access key and session token
+	// that ship as the second and third leg of a temporary-credentials
+	// triple. The matching access key id ("ASIA…") is caught by
+	// reAWSAccessKey. Covers both snake_case env-var / credentials-file
+	// form and PascalCase JSON form (e.g. "SecretAccessKey": "…").
+	reAWSSessionCred = regexp.MustCompile(`(?i)\b(?:aws_secret_access_key|secretaccesskey|aws_session_token|sessiontoken)\s*['"]?\s*[=:]\s*['"]?([A-Za-z0-9_/+=\-]{20,})`)
 	// HTTP Basic Authorization — captures the base64 blob after "Basic ".
 	// Mirrors reBearerToken — both can appear with or without the literal
 	// "Authorization:" header prefix in the same log line.
@@ -595,6 +609,58 @@ func arnExtra(sub []string) map[string]string {
 	}
 }
 
+// jwtExtra decodes a JWT's payload segment and pulls out sensitive claims
+// (email, phone_number, preferred_username, name) so the obfuscator can
+// pre-register them in the mapper. This gives cross-text consistency: if
+// the same email appears bare elsewhere in the same run it resolves to
+// the same fake as the one encoded inside the JWT.
+//
+// Keys use the "claim:<KIND>" convention so the obfuscator can route each
+// value to the right per-kind counter. Returns nil if the payload doesn't
+// decode cleanly or carries no sensitive claims.
+func jwtExtra(sub []string) map[string]string {
+	if len(sub) < 1 {
+		return nil
+	}
+	parts := strings.Split(sub[0], ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		// Some JWTs in the wild keep trailing '=' padding.
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil
+		}
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil
+	}
+	extra := map[string]string{}
+	if v, ok := claims["email"].(string); ok && v != "" {
+		extra["claim:"+string(KindEmail)] = v
+	}
+	if v, ok := claims["phone_number"].(string); ok && v != "" {
+		extra["claim:"+string(KindPhone)] = v
+	}
+	// Pick the first non-empty username-like claim — JWTs usually carry
+	// one of these, the order encodes preference. "sub" is intentionally
+	// excluded: it's most often an opaque IdP-side user ID, not a name
+	// the user would recognise elsewhere in their logs.
+	for _, key := range []string{"preferred_username", "nickname", "given_name", "name", "family_name"} {
+		if v, ok := claims[key].(string); ok && v != "" {
+			extra["claim:"+string(KindUser)] = v
+			break
+		}
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
+}
+
 func dsnExtra(sub []string) map[string]string {
 	u, err := url.Parse(sub[0])
 	if err != nil {
@@ -636,7 +702,7 @@ func DefaultRules() []Rule {
 		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1, MinEntropy: 2.0},
 		// JWT before the generic Bearer rule so a JWT-shaped token stays
 		// tagged as TOKEN instead of being relabelled as a generic API key.
-		{Kind: KindToken, Re: reJWT, Keyword: "eyJ"},
+		{Kind: KindToken, Re: reJWT, Keyword: "eyJ", ExtraFn: jwtExtra},
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
 		{Kind: KindAPIKey, Re: reGitHubFineGrainedPAT, Keyword: "github_pat_", MinEntropy: 3.0},
@@ -699,6 +765,8 @@ func DefaultRules() []Rule {
 		{Kind: KindAPIKey, Re: rePostmanKey, Keyword: "PMAK-", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reSourcegraphToken, Keyword: "sgp_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAirtablePAT, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGCPPrivateKeyId, CaptureGroup: 1, Keyword: "private_key_id", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAWSSessionCred, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
@@ -746,7 +814,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1, MinEntropy: 2.0},
 		// JWT before the generic Bearer rule so a JWT-shaped token stays
 		// tagged as TOKEN instead of being relabelled as a generic API key.
-		{Kind: KindToken, Re: reJWT, Keyword: "eyJ"},
+		{Kind: KindToken, Re: reJWT, Keyword: "eyJ", ExtraFn: jwtExtra},
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
 		{Kind: KindAPIKey, Re: reGitHubFineGrainedPAT, Keyword: "github_pat_", MinEntropy: 3.0},
@@ -809,6 +877,8 @@ func AggressiveRules() []Rule {
 		{Kind: KindAPIKey, Re: rePostmanKey, Keyword: "PMAK-", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reSourcegraphToken, Keyword: "sgp_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAirtablePAT, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGCPPrivateKeyId, CaptureGroup: 1, Keyword: "private_key_id", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAWSSessionCred, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
