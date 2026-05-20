@@ -1,6 +1,8 @@
 package detector
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"net"
 	"net/url"
 	"regexp"
@@ -145,8 +147,14 @@ var (
 	// GitHub tokens: ghp_ (PAT), gho_ (OAuth), ghu_ (user-to-server),
 	// ghs_ (server-to-server), ghr_ (refresh).
 	reGitHubToken = regexp.MustCompile(`\bgh[posur]_[A-Za-z0-9]{36,}\b`)
-	// Slack tokens: xox[abprs]-… (bot/app/user/refresh/legacy).
-	reSlackToken = regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}\b`)
+	// GitHub fine-grained personal access token (2022+). Distinct from the
+	// classic gh[posur]_ shape — fine-grained PATs carry a fixed
+	// "github_pat_" prefix followed by 82+ base62-ish chars with an
+	// internal underscore separator between key-id and secret halves.
+	reGitHubFineGrainedPAT = regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{82,}\b`)
+	// Slack tokens: xox[abeprs]-… (bot/app/user/refresh/legacy/external).
+	// "e" covers the xoxe- shape used for refresh and external tokens.
+	reSlackToken = regexp.MustCompile(`\bxox[abeprs]-[A-Za-z0-9-]{10,}\b`)
 
 	// Anthropic API / admin keys. The trailing "AA" is a stable terminator
 	// in all currently-issued keys; the 93-char body is base64url-safe.
@@ -162,6 +170,222 @@ var (
 	reStripeKey = regexp.MustCompile(`\b(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{10,99}\b`)
 	// GitLab personal / project / group access tokens.
 	reGitLabToken = regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20}\b`)
+	// npm access token — "npm_" + 36 hex chars. Real automation/publish
+	// tokens are hex-only; mixed-case tokens are legacy and rarely seen now.
+	reNpmToken = regexp.MustCompile(`\bnpm_[a-f0-9]{36}\b`)
+	// Hugging Face user access token — "hf_" + 34+ alphanumeric chars.
+	// Length floor matches empirical observation; HF docs only specify the
+	// prefix, real tokens land at 37 chars but we leave headroom.
+	reHFToken = regexp.MustCompile(`\bhf_[a-zA-Z0-9]{34,}\b`)
+	// Databricks API token — "dapi" + 32 hex chars + optional "-N" shard
+	// suffix used by workspace-bound tokens.
+	reDatabricksToken = regexp.MustCompile(`\bdapi[a-f0-9]{32}(?:-\d)?\b`)
+	// Doppler personal token — "dp.pt." + 43 alphanumeric chars.
+	reDopplerToken = regexp.MustCompile(`\bdp\.pt\.[a-zA-Z0-9]{43}\b`)
+	// DigitalOcean tokens — common shape across PAT (dop), OAuth (doo) and
+	// refresh (dor) variants: "do[opr]_v1_" + 64 hex chars.
+	reDOToken = regexp.MustCompile(`\bdo[opr]_v1_[a-f0-9]{64}\b`)
+	// Dynatrace API token — "dt0c01." + 24 alphanumeric + "." + 64
+	// alphanumeric. Two-segment structure encodes tenant and credential.
+	reDynatraceToken = regexp.MustCompile(`\bdt0c01\.[a-zA-Z0-9]{24}\.[a-zA-Z0-9]{64}\b`)
+	// age secret key — "AGE-SECRET-KEY-1" + 58 Bech32 (uppercase) chars.
+	// Bech32 alphabet excludes B, I, O, 1 (visually ambiguous in the
+	// canonical lowercase form); the uppercase form is what age emits.
+	reAgeSecretKey = regexp.MustCompile(`\bAGE-SECRET-KEY-1[023456789ACDEFGHJKLMNPQRSTUVWXYZ]{58}\b`)
+	// Alibaba Cloud access key ID — "LTAI" + 20 alphanumeric chars.
+	// Distinct from AWS AKIA (base32, 16 chars) by both prefix and alphabet.
+	reAlibabaAK = regexp.MustCompile(`\bLTAI[a-zA-Z0-9]{20}\b`)
+	// Atlassian API token (Jira / Confluence / Bitbucket Cloud) — "ATATT3"
+	// + 186 base64url chars. One regex covers all Atlassian products that
+	// share the cloud token format.
+	reAtlassianToken = regexp.MustCompile(`\bATATT3[A-Za-z0-9_\-=]{186}\b`)
+	// Twilio API key — "SK" + 32 lowercase hex. Distinct from Account SIDs
+	// ("AC" + 32 hex) which are public identifiers and don't need masking.
+	reTwilioAPIKey = regexp.MustCompile(`\bSK[0-9a-f]{32}\b`)
+	// SendGrid API key — "SG." + 66 chars from a base64-ish charset.
+	reSendGridKey = regexp.MustCompile(`\bSG\.[A-Za-z0-9=_\-.]{66}\b`)
+	// Mailgun private API token — "key-" + 32 lowercase hex.
+	reMailgunKey = regexp.MustCompile(`\bkey-[a-f0-9]{32}\b`)
+	// Notion integration token — "ntn_" + 11 digits + 35 alphanumeric.
+	reNotionToken = regexp.MustCompile(`\bntn_[0-9]{11}[A-Za-z0-9]{35}\b`)
+	// Linear API key — "lin_api_" + 40 alphanumeric (case-insensitive).
+	reLinearKey = regexp.MustCompile(`(?i)\blin_api_[A-Za-z0-9]{40}\b`)
+	// Stripe webhook signing secret — "whsec_" + 32+ alphanumeric.
+	// Distinct from reStripeKey (sk_/rk_) which catches secret/restricted
+	// API keys but not webhook signatures.
+	reStripeWebhook = regexp.MustCompile(`\bwhsec_[A-Za-z0-9]{32,}\b`)
+	// HashiCorp Vault token — "hv[sbr]." + 90+ base64url chars. The single
+	// regex covers all three modern Vault token classes: service (hvs.),
+	// batch (hvb.) and recovery (hvr.). Legacy "s.<random>" format omitted —
+	// the bare "s." prefix is too generic for safe pre-filtering.
+	reVaultToken = regexp.MustCompile(`\bhv[sbr]\.[A-Za-z0-9_\-]{90,}\b`)
+	// Sentry auth token — "sntrys_" + 60+ base64url. Modern (2023+) format;
+	// the older hex-only tokens have no usable prefix and fall through to
+	// the generic api_key/Bearer rules.
+	reSentryToken = regexp.MustCompile(`\bsntrys_[A-Za-z0-9_\-]{60,}\b`)
+	// PostHog personal API key — "phx_" + 40+ alphanumeric. Distinct from
+	// "phc_" project keys, which are public (embedded in client SDKs) and
+	// intentionally not masked.
+	rePostHogKey = regexp.MustCompile(`\bphx_[A-Za-z0-9]{40,}\b`)
+	// Replicate API token — "r8_" + 37 alphanumeric.
+	reReplicateKey = regexp.MustCompile(`\br8_[A-Za-z0-9]{37}\b`)
+	// Tailscale API / auth / OAuth client key — "tskey-{auth,api,client}-"
+	// + 20+ chars (alphanumeric with dashes; tokens carry an internal
+	// key-id/secret separator).
+	reTailscaleKey = regexp.MustCompile(`\btskey-(?:auth|api|client)-[A-Za-z0-9\-]{20,}\b`)
+	// Okta API token — sent in an "SSWS <token>" Authorization header, the
+	// same shape as reBearerToken but with Okta's custom scheme name.
+	reOktaToken = regexp.MustCompile(`(?i)(?:Authorization:\s*)?SSWS\s+([A-Za-z0-9_\-]{40,})`)
+	// Datadog API/APP keys — opaque 32-/40-hex strings carrying no usable
+	// prefix on their own; identified instead by the DD-API-KEY /
+	// DD-APPLICATION-KEY header name that ships them. Captures just the
+	// key value (group 1).
+	reDatadogHeader = regexp.MustCompile(`(?i)(?:DD-API-KEY|DD-APPLICATION-KEY):\s*([a-f0-9]{32,40})`)
+	// New Relic user API key — "NRAK-" + 27 uppercase alphanumeric. The
+	// license key and INSERT key formats have no equally stable prefix.
+	reNewRelicKey = regexp.MustCompile(`\bNRAK-[A-Z0-9]{27}\b`)
+	// Perplexity API key — "pplx-" + 40+ alphanumeric.
+	rePerplexityKey = regexp.MustCompile(`\bpplx-[A-Za-z0-9]{40,}\b`)
+	// Fly.io macaroon-based token — "fm2_" + 80+ base64url. The legacy
+	// "fo1_" / "fm1_" prefixes are deprecated and dropped from this rule
+	// to keep the keyword pre-filter unambiguous.
+	reFlyIOToken = regexp.MustCompile(`\bfm2_[A-Za-z0-9_\-]{80,}\b`)
+	// Shopify admin/storefront/customer tokens — "shp(at|ss|ca)_" + 32 hex.
+	// All three Shopify token classes share the shape, only the 2-char
+	// suffix differs.
+	reShopifyToken = regexp.MustCompile(`\bshp(?:at|ss|ca)_[a-f0-9]{32}\b`)
+	// Square access token — "EAAA" + 60+ base64url. "EAAA" is the fixed
+	// base64 encoding of the leading bytes of Square's token header.
+	reSquareToken = regexp.MustCompile(`\bEAAA[A-Za-z0-9_\-]{60,}\b`)
+	// Telegram bot API token — "<8-10 digit bot id>:<35-char secret>".
+	// No textual prefix; the digits-colon-token shape is the only anchor.
+	reTelegramBot = regexp.MustCompile(`\b\d{8,10}:[A-Za-z0-9_\-]{35}\b`)
+	// Discord bot token — three base64url segments separated by dots,
+	// first segment starts with "M" or "N" (base64 of the snowflake bot
+	// user id). Distinct from JWT by both first-char and the JWT rule's
+	// "eyJ" keyword pre-filter.
+	reDiscordBot = regexp.MustCompile(`\b[MN][A-Za-z0-9_\-]{23,26}\.[A-Za-z0-9_\-]{6,7}\.[A-Za-z0-9_\-]{27,40}\b`)
+	// Groq API key — "gsk_" + 50+ alphanumeric.
+	reGroqKey = regexp.MustCompile(`\bgsk_[A-Za-z0-9]{50,}\b`)
+	// xAI (Grok) API key — "xai-" + 80+ alphanumeric.
+	reXAIKey = regexp.MustCompile(`\bxai-[A-Za-z0-9]{80,}\b`)
+	// NVIDIA NGC API key — "nvapi-" + 60+ base64url.
+	reNVNGCKey = regexp.MustCompile(`\bnvapi-[A-Za-z0-9_\-]{60,}\b`)
+	// PlanetScale tokens — "pscale_<class>_" with class being one of the
+	// documented token types.
+	rePlanetScaleKey = regexp.MustCompile(`\bpscale_(?:tkn|oauth|pw|app|webauthn)_[A-Za-z0-9_\-]{20,}\b`)
+	// Supabase personal access token — "sbp_" + 40 hex. Service-role keys
+	// are JWT-shaped and caught by reJWT.
+	reSupabaseKey = regexp.MustCompile(`\bsbp_[a-f0-9]{40,}\b`)
+	// Buildkite user access token — "bkua_" + 40 hex.
+	reBuildkiteKey = regexp.MustCompile(`\bbkua_[a-f0-9]{40}\b`)
+	// Grafana Cloud access policy token — "glc_" + 40+ base64-ish chars.
+	reGrafanaCloudKey = regexp.MustCompile(`\bglc_[A-Za-z0-9_\-=]{40,}\b`)
+	// Honeycomb ingest key — "hcaik_" + 40+ alphanumeric. Classic
+	// 32-hex Honeycomb keys have no prefix and aren't covered here.
+	reHoneycombKey = regexp.MustCompile(`\bhcaik_[A-Za-z0-9_\-]{40,}\b`)
+	// PyPI API token — "pypi-" + 130+ base64url. Extremely long compared
+	// to other provider tokens; the format embeds a JSON payload.
+	rePyPIToken = regexp.MustCompile(`\bpypi-[A-Za-z0-9_\-]{130,}\b`)
+	// Resend API key — "re_" + 25+ alphanumeric. The 3-char prefix is
+	// common in unrelated identifiers ("core_", "store_"); the length
+	// floor + MinEntropy 3.0 filter out near-misses.
+	reResendKey = regexp.MustCompile(`\bre_[A-Za-z0-9]{25,}\b`)
+	// JFrog Artifactory API key — "AKCp" + 64+ alphanumeric.
+	reJFrogKey = regexp.MustCompile(`\bAKCp[A-Za-z0-9]{64,}\b`)
+	// SonarQube / SonarCloud tokens — sqp_ (project), sqa_ (analysis),
+	// squ_ (user) + 40 hex.
+	reSonarToken = regexp.MustCompile(`\bsq[pau]_[a-f0-9]{40}\b`)
+	// NuGet.org API key — "oy2" + 47+ base32-ish lowercase chars.
+	reNuGetKey = regexp.MustCompile(`\boy2[a-z0-9]{47,}\b`)
+	// LaunchDarkly SDK / mobile / API keys — "(sdk|mob|api)-" + UUID.
+	// Placed in the APIKEY chain before reUUID so the prefix stays
+	// attached to the captured range.
+	reLaunchDarklyKey = regexp.MustCompile(`\b(?:sdk|mob|api)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	// Backblaze B2 application key — "K00" + 28+ alphanumeric. The bare
+	// account-id form "00<22 hex>" is too generic and not covered here.
+	reBackblazeB2Key = regexp.MustCompile(`\bK00[A-Za-z0-9]{28,}\b`)
+	// HubSpot personal access token — "pat-<region>-<UUID>". Region is a
+	// short alphanumeric tag like "na1" / "eu1".
+	reHubSpotPAT = regexp.MustCompile(`\bpat-[a-z0-9]{2,5}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	// OpenRouter API key — "sk-or-v1-" + 64 hex. Distinct from reStripeKey
+	// ("sk_live_…") by the dash-vs-underscore separator.
+	reOpenRouterKey = regexp.MustCompile(`\bsk-or-v1-[a-f0-9]{64}\b`)
+	// Xata API key — "xau_" + 25+ alphanumeric.
+	reXataKey = regexp.MustCompile(`\bxau_[A-Za-z0-9]{25,}\b`)
+	// Stytch project secret — "secret-(test|live)-" + 40+ base64url.
+	reStytchSecret = regexp.MustCompile(`\bsecret-(?:test|live)-[A-Za-z0-9_\-]{40,}\b`)
+	// LangSmith access token — "lsv2_(pt|sk)_" + 40+ alphanumeric. The
+	// modern format covers personal (pt) and service (sk) tokens; legacy
+	// "ls__" tokens are out of scope.
+	reLangSmithToken = regexp.MustCompile(`\blsv2_(?:pt|sk)_[A-Za-z0-9]{40,}\b`)
+	// Brevo (formerly Sendinblue) API key — "xkeysib-" + 60+ hex.
+	reBrevoKey = regexp.MustCompile(`\bxkeysib-[a-f0-9]{60,}\b`)
+	// Terraform Cloud user / team token — "<id>.atlasv1.<secret>". The
+	// ".atlasv1." middle marker is the anchor; both segments carry the
+	// same base64url alphabet.
+	reTerraformCloudToken = regexp.MustCompile(`\b[A-Za-z0-9]{14,}\.atlasv1\.[A-Za-z0-9_\-]{60,}\b`)
+	// Postman API key — "PMAK-" + 24 hex + "-" + 34 hex. Common in CI
+	// pipelines that run newman-based API tests.
+	rePostmanKey = regexp.MustCompile(`\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}\b`)
+	// Sourcegraph personal access token — "sgp_" + 40+ alphanumeric.
+	reSourcegraphToken = regexp.MustCompile(`\bsgp_[A-Za-z0-9]{40,}\b`)
+	// Airtable personal access token — "pat" + 14 base62 + "." + 64 hex.
+	// No keyword pre-filter: "pat" is a common English substring; the
+	// pattern's strict structure (14 chars + dot + 64 hex) is the anchor.
+	reAirtablePAT = regexp.MustCompile(`\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b`)
+	// GCP service-account private_key_id field — the 40-hex id that
+	// fingerprints the key. The matching PEM private_key is already
+	// caught by rePEMPrivate; the client_email field is caught by
+	// reEmail. This rule covers the remaining sensitive piece of the
+	// SA JSON blob.
+	reGCPPrivateKeyId = regexp.MustCompile(`(?i)"private_key_id"\s*:\s*"([a-f0-9]{32,})"`)
+	// AWS session credentials — the secret access key and session token
+	// that ship as the second and third leg of a temporary-credentials
+	// triple. The matching access key id ("ASIA…") is caught by
+	// reAWSAccessKey. Covers both snake_case env-var / credentials-file
+	// form and PascalCase JSON form (e.g. "SecretAccessKey": "…").
+	reAWSSessionCred = regexp.MustCompile(`(?i)\b(?:aws_secret_access_key|secretaccesskey|aws_session_token|sessiontoken)\s*['"]?\s*[=:]\s*['"]?([A-Za-z0-9_/+=\-]{20,})`)
+	// GCP project id — identifying string that ties resources to one org.
+	// Caught in JSON ("project_id":"foo"), env (PROJECT_ID=foo) and CLI
+	// (--project=foo / --project foo) forms. Project IDs follow the
+	// "letter + 5–29 base-36-ish chars with dashes" GCP naming rule.
+	//
+	// The separator alternation (?:\s*[=:]\s*|\s+) is needed because the
+	// CLI form uses a bare space ("--project foo") while JSON/env use ":"
+	// or "=" possibly without surrounding whitespace.
+	reGCPProjectId = regexp.MustCompile(`(?i)(?:--project|\bproject[_-]?id)['"]?(?:\s*[=:]\s*|\s+)['"]?([a-z][-a-z0-9]{5,29})\b`)
+	// GCP service-account numeric client id — exactly 21 digits.
+	// Distinct from OAuth client IDs which carry letters/dashes plus the
+	// ".apps.googleusercontent.com" suffix and don't need special masking
+	// (they're often public on the OAuth-client side).
+	reGCPSAClientId = regexp.MustCompile(`(?i)"client_id"\s*:\s*"(\d{21})"`)
+	// HTTP Basic Authorization — captures the base64 blob after "Basic ".
+	// Mirrors reBearerToken — both can appear with or without the literal
+	// "Authorization:" header prefix in the same log line.
+	reBasicAuth = regexp.MustCompile(`(?i)(?:Authorization:\s*)?Basic\s+([A-Za-z0-9+/=]{16,})`)
+
+	// K8s Secret-style YAML value — indented "key: <b64>" lines where the
+	// value is exclusively base64 charset and ≥ 40 chars. Covers raw K8s
+	// Secrets (data:), helm releases (gzip+b64 blobs in sh.helm.release.v1.*
+	// — can be hundreds of KB single-line), prometheus-operator config
+	// secrets, ansible-vault, docker secrets. We trust the structural
+	// context (indented YAML key under a `data:`-style block); no decode is
+	// needed for this rule, the regex pattern alone implies sensitivity.
+	// {40,} has no upper bound — Go RE2 handles multi-MB single-line matches
+	// in linear time, fine for whole-Helm-release captures.
+	reK8sSecretValue = regexp.MustCompile(`(?m)^\s+[A-Za-z0-9_.-]+:\s+([A-Za-z0-9+/=]{40,})\s*$`)
+
+	// Environment variable with _B64 / _BASE64 suffix — common pattern for
+	// shipping credentials through env without quoting issues (CI runners,
+	// Docker envFrom, kubectl set env). The capture is the base64 value.
+	reB64EnvVar = regexp.MustCompile(`(?i)\b[A-Za-z][A-Za-z0-9_]*(?:_B64|_BASE64)\s*[=:]\s*['"]?([A-Za-z0-9+/=]{16,})`)
+
+	// Generic base64 blob — aggressive-only fallback for credentials packed
+	// into base64 outside of any recognised context (curl pipes, JSON config
+	// dumps, raw kubectl describe output). High entropy floor + decode-
+	// verify keeps S3 ETags / pod UIDs / SHA hashes from getting masked.
+	reGenericB64 = regexp.MustCompile(`\b[A-Za-z0-9+/]{32,}={0,2}`)
 
 	// Credit-card number: 13–19 digits with optional space/dash separators
 	// between any two digits. Lookahead/lookbehind isn't supported in RE2,
@@ -399,6 +623,58 @@ func arnExtra(sub []string) map[string]string {
 	}
 }
 
+// jwtExtra decodes a JWT's payload segment and pulls out sensitive claims
+// (email, phone_number, preferred_username, name) so the obfuscator can
+// pre-register them in the mapper. This gives cross-text consistency: if
+// the same email appears bare elsewhere in the same run it resolves to
+// the same fake as the one encoded inside the JWT.
+//
+// Keys use the "claim:<KIND>" convention so the obfuscator can route each
+// value to the right per-kind counter. Returns nil if the payload doesn't
+// decode cleanly or carries no sensitive claims.
+func jwtExtra(sub []string) map[string]string {
+	if len(sub) < 1 {
+		return nil
+	}
+	parts := strings.Split(sub[0], ".")
+	if len(parts) != 3 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		// Some JWTs in the wild keep trailing '=' padding.
+		payload, err = base64.URLEncoding.DecodeString(parts[1])
+		if err != nil {
+			return nil
+		}
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil
+	}
+	extra := map[string]string{}
+	if v, ok := claims["email"].(string); ok && v != "" {
+		extra["claim:"+string(KindEmail)] = v
+	}
+	if v, ok := claims["phone_number"].(string); ok && v != "" {
+		extra["claim:"+string(KindPhone)] = v
+	}
+	// Pick the first non-empty username-like claim — JWTs usually carry
+	// one of these, the order encodes preference. "sub" is intentionally
+	// excluded: it's most often an opaque IdP-side user ID, not a name
+	// the user would recognise elsewhere in their logs.
+	for _, key := range []string{"preferred_username", "nickname", "given_name", "name", "family_name"} {
+		if v, ok := claims[key].(string); ok && v != "" {
+			extra["claim:"+string(KindUser)] = v
+			break
+		}
+	}
+	if len(extra) == 0 {
+		return nil
+	}
+	return extra
+}
+
 func dsnExtra(sub []string) map[string]string {
 	u, err := url.Parse(sub[0])
 	if err != nil {
@@ -419,9 +695,12 @@ func dsnExtra(sub []string) map[string]string {
 	return extra
 }
 
-// DefaultRules is the conservative ruleset used when --aggressive is off.
+// coreRules contains the rules shared across all detection modes — they
+// don't vary by aggressiveness. The three public ruleset functions append
+// their own HOST/USER/PATH/PORT/B64 tail on top of this.
+//
 // Order is priority — first rule wins at any given byte range.
-func DefaultRules() []Rule {
+func coreRules() []Rule {
 	return []Rule{
 		// PRIVKEY first — it spans newlines and embeds base64 that would
 		// otherwise be shredded by IP/UUID/etc.
@@ -440,16 +719,78 @@ func DefaultRules() []Rule {
 		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1, MinEntropy: 2.0},
 		// JWT before the generic Bearer rule so a JWT-shaped token stays
 		// tagged as TOKEN instead of being relabelled as a generic API key.
-		{Kind: KindToken, Re: reJWT, Keyword: "eyJ"},
+		{Kind: KindToken, Re: reJWT, Keyword: "eyJ", ExtraFn: jwtExtra},
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
+		{Kind: KindAPIKey, Re: reGitHubFineGrainedPAT, Keyword: "github_pat_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "glpat-"},
 		{Kind: KindAPIKey, Re: reSlackToken, Keyword: "xox"},
 		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
 		{Kind: KindAPIKey, Re: reOpenAIKey, Keyword: "T3BlbkFJ"},
 		{Kind: KindAPIKey, Re: reGoogleAPIKey, Keyword: "AIza"},
+		{Kind: KindAPIKey, Re: reNpmToken, Keyword: "npm_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHFToken, Keyword: "hf_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDatabricksToken, Keyword: "dapi", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDopplerToken, Keyword: "dp.pt.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDOToken, Keyword: "_v1_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDynatraceToken, Keyword: "dt0c01.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAgeSecretKey, Keyword: "AGE-SECRET-KEY-1", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAlibabaAK, Keyword: "LTAI", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAtlassianToken, Keyword: "ATATT3", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTwilioAPIKey, Keyword: "SK", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSendGridKey, Keyword: "SG.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reMailgunKey, Keyword: "key-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNotionToken, Keyword: "ntn_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLinearKey, Keyword: "lin_api_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reStripeWebhook, Keyword: "whsec_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reVaultToken, Keyword: "hv", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSentryToken, Keyword: "sntrys_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePostHogKey, Keyword: "phx_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reReplicateKey, Keyword: "r8_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTailscaleKey, Keyword: "tskey-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reOktaToken, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDatadogHeader, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNewRelicKey, Keyword: "NRAK-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePerplexityKey, Keyword: "pplx-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reFlyIOToken, Keyword: "fm2_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reShopifyToken, Keyword: "shp", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSquareToken, Keyword: "EAAA", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTelegramBot, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDiscordBot, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGroqKey, Keyword: "gsk_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reXAIKey, Keyword: "xai-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNVNGCKey, Keyword: "nvapi-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePlanetScaleKey, Keyword: "pscale_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSupabaseKey, Keyword: "sbp_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBuildkiteKey, Keyword: "bkua_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGrafanaCloudKey, Keyword: "glc_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHoneycombKey, Keyword: "hcaik_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePyPIToken, Keyword: "pypi-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reResendKey, Keyword: "re_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reJFrogKey, Keyword: "AKCp", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSonarToken, Keyword: "sq", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNuGetKey, Keyword: "oy2", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLaunchDarklyKey, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBackblazeB2Key, Keyword: "K00", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHubSpotPAT, Keyword: "pat-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reOpenRouterKey, Keyword: "sk-or-v1-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reXataKey, Keyword: "xau_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reStytchSecret, Keyword: "secret-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLangSmithToken, Keyword: "lsv2_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBrevoKey, Keyword: "xkeysib-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTerraformCloudToken, Keyword: ".atlasv1.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePostmanKey, Keyword: "PMAK-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSourcegraphToken, Keyword: "sgp_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAirtablePAT, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGCPPrivateKeyId, CaptureGroup: 1, Keyword: "private_key_id", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGCPProjectId, CaptureGroup: 1, Keyword: "project", MinEntropy: 2.5},
+		{Kind: KindAPIKey, Re: reGCPSAClientId, CaptureGroup: 1, Keyword: "client_id", MinEntropy: 2.5},
+		{Kind: KindAPIKey, Re: reAWSSessionCred, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reK8sSecretValue, CaptureGroup: 1, MinEntropy: 4.0},
+		{Kind: KindAPIKey, Re: reB64EnvVar, CaptureGroup: 1, MinEntropy: 4.0},
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser, Keyword: "'@'"},
@@ -462,68 +803,68 @@ func DefaultRules() []Rule {
 		{Kind: KindMAC, Re: reMAC},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
+	}
+}
+
+// tailRules builds the HOST/FQDN/USER/PATH/PORT/B64 tail with mode-specific
+// extras. Each flag enables one of the wider-capture variants:
+//   - host:    catches bare single-label hostnames anchored on "host=" / "node=".
+//   - user:    catches "as alice" / "for alice" outside the strict user= form.
+//   - path:    catches any 2+ segment absolute path, not just /var,/etc,/home.
+//   - port:    catches bare ":NNNN" port numbers.
+//   - b64:     decode-verify on long base64 spans (slowest, most FP-prone).
+func tailRules(host, user, path, port, b64 bool) []Rule {
+	r := []Rule{
 		// HOST before FQDN so .local/.internal names get the "host" treatment
 		// instead of being relabelled as a generic FQDN.
 		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
 		{Kind: KindHost, Re: reHostConservative},
-		{Kind: KindFQDN, Re: reFQDN, Validate: validFQDN},
-		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
-		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
 	}
+	if host {
+		r = append(r, Rule{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1})
+	}
+	r = append(r,
+		Rule{Kind: KindFQDN, Re: reFQDN, Validate: validFQDN},
+		Rule{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
+		Rule{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
+		Rule{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
+	)
+	if user {
+		r = append(r, Rule{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser})
+	}
+	r = append(r, Rule{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1})
+	if path {
+		r = append(r, Rule{Kind: KindPath, Re: rePathAggressive, CaptureGroup: 1})
+	}
+	if port {
+		r = append(r, Rule{Kind: KindPort, Re: rePort, CaptureGroup: 1})
+	}
+	if b64 {
+		// Generic base64 decode-verify runs last so it only inspects spans
+		// not already claimed by higher-precision rules. Emits a Match only
+		// if the decoded text contains a credential-class kind — keeps S3
+		// ETags, pod UIDs, SHA hashes unmasked.
+		r = append(r, Rule{Kind: KindAPIKey, Re: reGenericB64, MinEntropy: 4.5, DecodeBase64: true})
+	}
+	return r
 }
 
-// AggressiveRules adds wider USER/HOST/PATH/PORT capture at the cost of
-// more false positives. Enabled via --aggressive.
+// DefaultRules is the conservative ruleset — strict context required for
+// USER / HOST / PATH, no PORT or generic base64 detection.
+func DefaultRules() []Rule {
+	return append(coreRules(), tailRules(false, false, false, false, false)...)
+}
+
+// BalancedRules adds wider USER ("as alice"), PATH (any abs path) and PORT
+// (":5432") capture without enabling the noisier HOST single-label rule
+// or the generic-B64 decode-verify pass.
+func BalancedRules() []Rule {
+	return append(coreRules(), tailRules(false, true, true, true, false)...)
+}
+
+// AggressiveRules enables every wider-capture variant — single-label
+// HOST, "as alice" USER, any-abs-path PATH, bare PORT, and the
+// generic-B64 decode-verify pass.
 func AggressiveRules() []Rule {
-	return []Rule{
-		{Kind: KindPrivKey, Re: rePEMPrivate, Keyword: "-----BEGIN"},
-		{Re: reSSHAlgIdent, Skip: true},
-		{Kind: KindDSN, Re: reDSN, ExtraFn: dsnExtra},
-		{Kind: KindARN, Re: reARN, ExtraFn: arnExtra, Keyword: "arn:aws"},
-		{Kind: KindPubKey, Re: reSSHPubKey},
-		{Kind: KindPubKey, Re: reSSHPubKeyBare, Keyword: "AAAA"},
-		{Kind: KindFingerprint, Re: reSHA256FP, Keyword: "SHA256:"},
-		{Kind: KindFingerprint, Re: reOCIDigest, Keyword: "sha256:"},
-		{Kind: KindFingerprint, Re: reMD5FP, Keyword: "MD5:"},
-		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1, MinEntropy: 2.0},
-		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1, MinEntropy: 2.0},
-		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1, MinEntropy: 2.0},
-		// JWT before the generic Bearer rule so a JWT-shaped token stays
-		// tagged as TOKEN instead of being relabelled as a generic API key.
-		{Kind: KindToken, Re: reJWT, Keyword: "eyJ"},
-		{Kind: KindAPIKey, Re: reAWSAccessKey},
-		{Kind: KindAPIKey, Re: reGitHubToken},
-		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "glpat-"},
-		{Kind: KindAPIKey, Re: reSlackToken, Keyword: "xox"},
-		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
-		{Kind: KindAPIKey, Re: reOpenAIKey, Keyword: "T3BlbkFJ"},
-		{Kind: KindAPIKey, Re: reGoogleAPIKey, Keyword: "AIza"},
-		{Kind: KindAPIKey, Re: reStripeKey},
-		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser, Keyword: "'@'"},
-		{Kind: KindUUID, Re: reUUID},
-		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
-		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},
-		{Kind: KindPhone, Re: rePhoneContext, CaptureGroup: 1, Validate: validPhone},
-		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
-		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
-		{Kind: KindMAC, Re: reMAC},
-		{Kind: KindIP, Re: reIP, Validate: validIPv4},
-		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
-		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
-		{Kind: KindHost, Re: reHostConservative},
-		{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1},
-		{Kind: KindFQDN, Re: reFQDN, Validate: validFQDN},
-		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
-		{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
-		{Kind: KindPath, Re: rePathAggressive, CaptureGroup: 1},
-		{Kind: KindPort, Re: rePort, CaptureGroup: 1},
-	}
+	return append(coreRules(), tailRules(true, true, true, true, true)...)
 }

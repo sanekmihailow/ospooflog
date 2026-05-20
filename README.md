@@ -21,6 +21,21 @@ internally as the stable mapping key but never leaves the tool.
 
 ## Install
 
+### Prebuilt binaries
+
+Download from the [releases page](https://github.com/sanekmihailow/ospooflog/releases).
+Each release ships statically-linked binaries for Linux / macOS / Windows
+(amd64 and arm64) plus a `SHA256SUMS` file. Drop the binary into your
+`$PATH` and run.
+
+```sh
+# example for Linux amd64
+curl -L -o ospooflog https://github.com/sanekmihailow/ospooflog/releases/latest/download/ospooflog-linux-amd64
+chmod +x ospooflog && sudo mv ospooflog /usr/local/bin/
+```
+
+### From source
+
 Requires Go 1.21+. Install Go from <https://go.dev/dl/> or via a package
 manager (see per-platform notes below).
 
@@ -94,7 +109,7 @@ ospooflog -s session.json show
 |----------|---------------------------------------------------------|------------------------------------------------|
 | DSN      | `postgres://alice:pwd@db:5432/appdb`                    | `postgres://user1:strong_password@localhost:5432/mydb1` |
 | ARN      | `arn:aws:s3:::secrets/key`                              | `arn:aws:s3::000000000000:fake-resource/n1` (service/region preserved) |
-| APIKEY   | AWS `AKIA…`, GitHub `ghp_…`, GitLab `glpat-…`, Slack `xox[abprs]-…`, Anthropic `sk-ant-…`, OpenAI `sk-…T3BlbkFJ…`, Google `AIza…`, Stripe `sk_live_…`, `Bearer X`, `api_key=…`, `secret=…`, `access_token=…` | `FAKE_API_KEY_001` |
+| APIKEY   | [list providers](#covered-providers%3A)                 | `FAKE_API_KEY_001`                             |
 | TOKEN    | `eyJhbGciOiJIUzI1NiJ9.eyJzdWIi…` (JWT)                  | fake JWT-shaped string                         |
 | PWD      | `password=hunter2`, `IDENTIFIED BY 'secret'`            | `FAKE_PASSWORD_001`                            |
 | PUBKEY   | `ssh-rsa AAAAB3NzaC1…`                                  | `ssh-rsa AAAAFAKEPUBKEY0001`                   |
@@ -114,6 +129,69 @@ ospooflog -s session.json show
 | PATH     | `/var/lib/postgresql/data`, `/sbin/auditctl`            | `/var/lib/myapp1/data`                         |
 | PORT     | `:5432` (only with `--aggressive`)                      | `:8080`                                        |
 
+
+### Covered providers:
+
+- AWS `AKIA…` / `AWS_SECRET_ACCESS_KEY=…` / `AWS_SESSION_TOKEN=…`,
+- Airtable `pat<id>.<secret>`,
+- Anthropic `sk-ant-…`,
+- Atlassian `ATATT3…`,
+- Backblaze B2 `K00…`,
+- Brevo `xkeysib-…`,
+- Buildkite `bkua_…`,
+- Datadog `DD-API-KEY:…`,
+- Discord bot,
+- Fly.io `fm2_…`,
+- GCP service-account `"private_key_id":…` / `"client_id":…` (21-digit) / `project_id` (JSON, env, `--project` flag),
+- GitHub `ghp_…` / `github_pat_…`,
+- GitLab `glpat-…`,
+- Google `AIza…`,
+- Grafana Cloud `glc_…`,
+- Groq `gsk_…`,
+- Honeycomb `hcaik_…`,
+- HubSpot `pat-<region>-<uuid>`,
+- JFrog `AKCp…`,
+- LangSmith `lsv2_(pt\|sk)_…`,
+- LaunchDarkly `(sdk\|mob\|api)-<uuid>`,
+- Linear `lin_api_…`,
+- Mailgun `key-…`,
+- NVIDIA NGC `nvapi-…`,
+- New Relic `NRAK-…`,
+- Notion `ntn_…`,
+- NuGet `oy2…`,
+- Okta `SSWS …`,
+- OpenAI `sk-…T3BlbkFJ…`,
+- OpenRouter `sk-or-v1-…`,
+- Perplexity `pplx-…`,
+- PlanetScale `pscale_…`,
+- PostHog `phx_…`,
+- Postman `PMAK-…`,
+- PyPI `pypi-…`,
+- Replicate `r8_…`,
+- Resend `re_…`,
+- SendGrid `SG.…`,
+- Sentry `sntrys_…`,
+- Shopify `shp(at\|ss\|ca)_…`,
+- Slack `xox[abprs]-…`,
+- SonarQube `sq(p\|a\|u)_…`,
+- Sourcegraph `sgp_…`,
+- Square `EAAA…`,
+- Stripe `sk_live_…` / `whsec_…`,
+- Stytch `secret-(test\|live)-…`,
+- Supabase `sbp_…`,
+- Tailscale `tskey-…`,
+- Telegram bot,
+- Terraform Cloud `…atlasv1…`,
+- Twilio `SK…`,
+- Vault `hvs.…`,
+- Xata `xau_…`,
+- `Bearer X`,
+- `access_token=…`
+- `api_key=…`,
+- `secret=…`,
+- xAI `xai-…`,
+
+
 ## Flags
 
 ```
@@ -121,11 +199,16 @@ ospooflog -s session.json show
   -o, --output       output file (default: stdout)
   -s, --session      session file (required)
 
-  --aggressive       wider USER/HOST/PATH/PORT detection — more matches,
-                     more false positives. Off by default.
-  --strict-restore   word-boundary aware restore. Slower, but immune to
-                     substring traps where a registered fake is a prefix
-                     of an unrelated string in the AI response.
+  --mode             detection breadth: safe (default) | balanced |
+                     aggressive. Higher levels catch more, with higher
+                     false-positive risk.
+  --aggressive       deprecated — alias for `--mode aggressive`.
+  --fast-restore     opt out of the default word-boundary aware restore.
+                     Faster, but vulnerable to substring traps where a
+                     registered fake is a prefix of an unrelated string
+                     in the AI response.
+  --strict-restore   deprecated — strict restore is now the default;
+                     pass `--fast-restore` to opt out.
   --dry-run          obfuscate: print detected matches without modifying
                      text or persisting the session.
   --overrides path   YAML file with fixed origin → replace pairs that win
@@ -138,29 +221,31 @@ ospooflog -s session.json show
 
 ## Examples
 
-### Conservative vs aggressive
+### Detection modes
 
-By default USER/HOST/PATH only fire in explicit contexts to keep false
-positives low — `user=alice` is captured but bare "alice" sitting in prose
-is not.
+`safe` (default) requires explicit context for USER / HOST / PATH —
+`user=alice` matches, bare `alice` in prose does not. `balanced` adds
+`as alice` / `for alice`, any 2-segment absolute path, and bare
+`:PORT` numbers. `aggressive` further adds single-label hostnames
+(`host=db-prod`) and a generic base64-decode-verify pass.
 
 ```sh
 echo "user=alice handled by alice's team" | ospooflog -s s.json obfuscate
 # user=user1 handled by alice's team
 
-echo "user=alice handled by alice's team" | ospooflog -s s.json --aggressive obfuscate
+echo "user=alice handled by alice's team" | ospooflog -s s.json --mode balanced obfuscate
 # user=user1 handled by user1's team    # "for/as <name>" patterns now match
 ```
 
-### Substring trap and `--strict-restore`
+### Substring trap (strict restore is on by default)
 
 ```sh
 # session has 192.168.1.1 ↔ 10.1.2.3
 echo "also try 192.168.1.10 instead" | ospooflog -s s.json restore
-# also try 10.1.2.30 instead              # broken — substring collision
+# also try 192.168.1.10 instead         # word-boundary check protects the AI's invented IP
 
-echo "also try 192.168.1.10 instead" | ospooflog -s s.json --strict-restore restore
-# also try 192.168.1.10 instead           # left alone — boundary check
+echo "also try 192.168.1.10 instead" | ospooflog -s s.json --fast-restore restore
+# also try 10.1.2.30 instead            # opt-in to fast restore — substring collision returns
 ```
 
 ### Custom replacements with `--overrides`
