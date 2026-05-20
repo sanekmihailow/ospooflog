@@ -94,7 +94,7 @@ ospooflog -s session.json show
 |----------|---------------------------------------------------------|------------------------------------------------|
 | DSN      | `postgres://alice:pwd@db:5432/appdb`                    | `postgres://user1:strong_password@localhost:5432/mydb1` |
 | ARN      | `arn:aws:s3:::secrets/key`                              | `arn:aws:s3::000000000000:fake-resource/n1` (service/region preserved) |
-| APIKEY   | AWS `AKIA…`, GitHub `ghp_…`, GitLab `glpat-…`, Slack `xox[abprs]-…`, Anthropic `sk-ant-…`, OpenAI `sk-…T3BlbkFJ…`, Google `AIza…`, Stripe `sk_live_…` / `whsec_…`, Atlassian `ATATT3…`, Twilio `SK…`, SendGrid `SG.…`, Mailgun `key-…`, Notion `ntn_…`, Linear `lin_api_…`, `Bearer X`, `api_key=…`, `secret=…`, `access_token=…` | `FAKE_API_KEY_001` |
+| APIKEY   | [list providers](#covered-providers%3A)                 | `FAKE_API_KEY_001`                             |
 | TOKEN    | `eyJhbGciOiJIUzI1NiJ9.eyJzdWIi…` (JWT)                  | fake JWT-shaped string                         |
 | PWD      | `password=hunter2`, `IDENTIFIED BY 'secret'`            | `FAKE_PASSWORD_001`                            |
 | PUBKEY   | `ssh-rsa AAAAB3NzaC1…`                                  | `ssh-rsa AAAAFAKEPUBKEY0001`                   |
@@ -113,6 +113,68 @@ ospooflog -s session.json show
 | USER     | `user=alice`, `Failed publickey for alice`              | `user1` (only the value swaps)                 |
 | PATH     | `/var/lib/postgresql/data`, `/sbin/auditctl`            | `/var/lib/myapp1/data`                         |
 | PORT     | `:5432` (only with `--aggressive`)                      | `:8080`                                        |
+
+
+### Covered providers:
+
+- AWS `AKIA…`,
+- Airtable `pat<id>.<secret>`,
+- Anthropic `sk-ant-…`,
+- Atlassian `ATATT3…`,
+- Backblaze B2 `K00…`,
+- Brevo `xkeysib-…`,
+- Buildkite `bkua_…`,
+- Datadog `DD-API-KEY:…`,
+- Discord bot,
+- Fly.io `fm2_…`,
+- GitHub `ghp_…` / `github_pat_…`,
+- GitLab `glpat-…`,
+- Google `AIza…`,
+- Grafana Cloud `glc_…`,
+- Groq `gsk_…`,
+- Honeycomb `hcaik_…`,
+- HubSpot `pat-<region>-<uuid>`,
+- JFrog `AKCp…`,
+- LangSmith `lsv2_(pt\|sk)_…`,
+- LaunchDarkly `(sdk\|mob\|api)-<uuid>`,
+- Linear `lin_api_…`,
+- Mailgun `key-…`,
+- NVIDIA NGC `nvapi-…`,
+- New Relic `NRAK-…`,
+- Notion `ntn_…`,
+- NuGet `oy2…`,
+- Okta `SSWS …`,
+- OpenAI `sk-…T3BlbkFJ…`,
+- OpenRouter `sk-or-v1-…`,
+- Perplexity `pplx-…`,
+- PlanetScale `pscale_…`,
+- PostHog `phx_…`,
+- Postman `PMAK-…`,
+- PyPI `pypi-…`,
+- Replicate `r8_…`,
+- Resend `re_…`,
+- SendGrid `SG.…`,
+- Sentry `sntrys_…`,
+- Shopify `shp(at\|ss\|ca)_…`,
+- Slack `xox[abprs]-…`,
+- SonarQube `sq(p\|a\|u)_…`,
+- Sourcegraph `sgp_…`,
+- Square `EAAA…`,
+- Stripe `sk_live_…` / `whsec_…`,
+- Stytch `secret-(test\|live)-…`,
+- Supabase `sbp_…`,
+- Tailscale `tskey-…`,
+- Telegram bot,
+- Terraform Cloud `…atlasv1…`,
+- Twilio `SK…`,
+- Vault `hvs.…`,
+- Xata `xau_…`,
+- `Bearer X`,
+- `access_token=…`
+- `api_key=…`,
+- `secret=…`,
+- xAI `xai-…`,
+
 
 ## Flags
 

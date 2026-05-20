@@ -145,6 +145,11 @@ var (
 	// GitHub tokens: ghp_ (PAT), gho_ (OAuth), ghu_ (user-to-server),
 	// ghs_ (server-to-server), ghr_ (refresh).
 	reGitHubToken = regexp.MustCompile(`\bgh[posur]_[A-Za-z0-9]{36,}\b`)
+	// GitHub fine-grained personal access token (2022+). Distinct from the
+	// classic gh[posur]_ shape — fine-grained PATs carry a fixed
+	// "github_pat_" prefix followed by 82+ base62-ish chars with an
+	// internal underscore separator between key-id and secret halves.
+	reGitHubFineGrainedPAT = regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{82,}\b`)
 	// Slack tokens: xox[abeprs]-… (bot/app/user/refresh/legacy/external).
 	// "e" covers the xoxe- shape used for refresh and external tokens.
 	reSlackToken = regexp.MustCompile(`\bxox[abeprs]-[A-Za-z0-9-]{10,}\b`)
@@ -207,6 +212,126 @@ var (
 	// Distinct from reStripeKey (sk_/rk_) which catches secret/restricted
 	// API keys but not webhook signatures.
 	reStripeWebhook = regexp.MustCompile(`\bwhsec_[A-Za-z0-9]{32,}\b`)
+	// HashiCorp Vault token — "hv[sbr]." + 90+ base64url chars. The single
+	// regex covers all three modern Vault token classes: service (hvs.),
+	// batch (hvb.) and recovery (hvr.). Legacy "s.<random>" format omitted —
+	// the bare "s." prefix is too generic for safe pre-filtering.
+	reVaultToken = regexp.MustCompile(`\bhv[sbr]\.[A-Za-z0-9_\-]{90,}\b`)
+	// Sentry auth token — "sntrys_" + 60+ base64url. Modern (2023+) format;
+	// the older hex-only tokens have no usable prefix and fall through to
+	// the generic api_key/Bearer rules.
+	reSentryToken = regexp.MustCompile(`\bsntrys_[A-Za-z0-9_\-]{60,}\b`)
+	// PostHog personal API key — "phx_" + 40+ alphanumeric. Distinct from
+	// "phc_" project keys, which are public (embedded in client SDKs) and
+	// intentionally not masked.
+	rePostHogKey = regexp.MustCompile(`\bphx_[A-Za-z0-9]{40,}\b`)
+	// Replicate API token — "r8_" + 37 alphanumeric.
+	reReplicateKey = regexp.MustCompile(`\br8_[A-Za-z0-9]{37}\b`)
+	// Tailscale API / auth / OAuth client key — "tskey-{auth,api,client}-"
+	// + 20+ chars (alphanumeric with dashes; tokens carry an internal
+	// key-id/secret separator).
+	reTailscaleKey = regexp.MustCompile(`\btskey-(?:auth|api|client)-[A-Za-z0-9\-]{20,}\b`)
+	// Okta API token — sent in an "SSWS <token>" Authorization header, the
+	// same shape as reBearerToken but with Okta's custom scheme name.
+	reOktaToken = regexp.MustCompile(`(?i)(?:Authorization:\s*)?SSWS\s+([A-Za-z0-9_\-]{40,})`)
+	// Datadog API/APP keys — opaque 32-/40-hex strings carrying no usable
+	// prefix on their own; identified instead by the DD-API-KEY /
+	// DD-APPLICATION-KEY header name that ships them. Captures just the
+	// key value (group 1).
+	reDatadogHeader = regexp.MustCompile(`(?i)(?:DD-API-KEY|DD-APPLICATION-KEY):\s*([a-f0-9]{32,40})`)
+	// New Relic user API key — "NRAK-" + 27 uppercase alphanumeric. The
+	// license key and INSERT key formats have no equally stable prefix.
+	reNewRelicKey = regexp.MustCompile(`\bNRAK-[A-Z0-9]{27}\b`)
+	// Perplexity API key — "pplx-" + 40+ alphanumeric.
+	rePerplexityKey = regexp.MustCompile(`\bpplx-[A-Za-z0-9]{40,}\b`)
+	// Fly.io macaroon-based token — "fm2_" + 80+ base64url. The legacy
+	// "fo1_" / "fm1_" prefixes are deprecated and dropped from this rule
+	// to keep the keyword pre-filter unambiguous.
+	reFlyIOToken = regexp.MustCompile(`\bfm2_[A-Za-z0-9_\-]{80,}\b`)
+	// Shopify admin/storefront/customer tokens — "shp(at|ss|ca)_" + 32 hex.
+	// All three Shopify token classes share the shape, only the 2-char
+	// suffix differs.
+	reShopifyToken = regexp.MustCompile(`\bshp(?:at|ss|ca)_[a-f0-9]{32}\b`)
+	// Square access token — "EAAA" + 60+ base64url. "EAAA" is the fixed
+	// base64 encoding of the leading bytes of Square's token header.
+	reSquareToken = regexp.MustCompile(`\bEAAA[A-Za-z0-9_\-]{60,}\b`)
+	// Telegram bot API token — "<8-10 digit bot id>:<35-char secret>".
+	// No textual prefix; the digits-colon-token shape is the only anchor.
+	reTelegramBot = regexp.MustCompile(`\b\d{8,10}:[A-Za-z0-9_\-]{35}\b`)
+	// Discord bot token — three base64url segments separated by dots,
+	// first segment starts with "M" or "N" (base64 of the snowflake bot
+	// user id). Distinct from JWT by both first-char and the JWT rule's
+	// "eyJ" keyword pre-filter.
+	reDiscordBot = regexp.MustCompile(`\b[MN][A-Za-z0-9_\-]{23,26}\.[A-Za-z0-9_\-]{6,7}\.[A-Za-z0-9_\-]{27,40}\b`)
+	// Groq API key — "gsk_" + 50+ alphanumeric.
+	reGroqKey = regexp.MustCompile(`\bgsk_[A-Za-z0-9]{50,}\b`)
+	// xAI (Grok) API key — "xai-" + 80+ alphanumeric.
+	reXAIKey = regexp.MustCompile(`\bxai-[A-Za-z0-9]{80,}\b`)
+	// NVIDIA NGC API key — "nvapi-" + 60+ base64url.
+	reNVNGCKey = regexp.MustCompile(`\bnvapi-[A-Za-z0-9_\-]{60,}\b`)
+	// PlanetScale tokens — "pscale_<class>_" with class being one of the
+	// documented token types.
+	rePlanetScaleKey = regexp.MustCompile(`\bpscale_(?:tkn|oauth|pw|app|webauthn)_[A-Za-z0-9_\-]{20,}\b`)
+	// Supabase personal access token — "sbp_" + 40 hex. Service-role keys
+	// are JWT-shaped and caught by reJWT.
+	reSupabaseKey = regexp.MustCompile(`\bsbp_[a-f0-9]{40,}\b`)
+	// Buildkite user access token — "bkua_" + 40 hex.
+	reBuildkiteKey = regexp.MustCompile(`\bbkua_[a-f0-9]{40}\b`)
+	// Grafana Cloud access policy token — "glc_" + 40+ base64-ish chars.
+	reGrafanaCloudKey = regexp.MustCompile(`\bglc_[A-Za-z0-9_\-=]{40,}\b`)
+	// Honeycomb ingest key — "hcaik_" + 40+ alphanumeric. Classic
+	// 32-hex Honeycomb keys have no prefix and aren't covered here.
+	reHoneycombKey = regexp.MustCompile(`\bhcaik_[A-Za-z0-9_\-]{40,}\b`)
+	// PyPI API token — "pypi-" + 130+ base64url. Extremely long compared
+	// to other provider tokens; the format embeds a JSON payload.
+	rePyPIToken = regexp.MustCompile(`\bpypi-[A-Za-z0-9_\-]{130,}\b`)
+	// Resend API key — "re_" + 25+ alphanumeric. The 3-char prefix is
+	// common in unrelated identifiers ("core_", "store_"); the length
+	// floor + MinEntropy 3.0 filter out near-misses.
+	reResendKey = regexp.MustCompile(`\bre_[A-Za-z0-9]{25,}\b`)
+	// JFrog Artifactory API key — "AKCp" + 64+ alphanumeric.
+	reJFrogKey = regexp.MustCompile(`\bAKCp[A-Za-z0-9]{64,}\b`)
+	// SonarQube / SonarCloud tokens — sqp_ (project), sqa_ (analysis),
+	// squ_ (user) + 40 hex.
+	reSonarToken = regexp.MustCompile(`\bsq[pau]_[a-f0-9]{40}\b`)
+	// NuGet.org API key — "oy2" + 47+ base32-ish lowercase chars.
+	reNuGetKey = regexp.MustCompile(`\boy2[a-z0-9]{47,}\b`)
+	// LaunchDarkly SDK / mobile / API keys — "(sdk|mob|api)-" + UUID.
+	// Placed in the APIKEY chain before reUUID so the prefix stays
+	// attached to the captured range.
+	reLaunchDarklyKey = regexp.MustCompile(`\b(?:sdk|mob|api)-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	// Backblaze B2 application key — "K00" + 28+ alphanumeric. The bare
+	// account-id form "00<22 hex>" is too generic and not covered here.
+	reBackblazeB2Key = regexp.MustCompile(`\bK00[A-Za-z0-9]{28,}\b`)
+	// HubSpot personal access token — "pat-<region>-<UUID>". Region is a
+	// short alphanumeric tag like "na1" / "eu1".
+	reHubSpotPAT = regexp.MustCompile(`\bpat-[a-z0-9]{2,5}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b`)
+	// OpenRouter API key — "sk-or-v1-" + 64 hex. Distinct from reStripeKey
+	// ("sk_live_…") by the dash-vs-underscore separator.
+	reOpenRouterKey = regexp.MustCompile(`\bsk-or-v1-[a-f0-9]{64}\b`)
+	// Xata API key — "xau_" + 25+ alphanumeric.
+	reXataKey = regexp.MustCompile(`\bxau_[A-Za-z0-9]{25,}\b`)
+	// Stytch project secret — "secret-(test|live)-" + 40+ base64url.
+	reStytchSecret = regexp.MustCompile(`\bsecret-(?:test|live)-[A-Za-z0-9_\-]{40,}\b`)
+	// LangSmith access token — "lsv2_(pt|sk)_" + 40+ alphanumeric. The
+	// modern format covers personal (pt) and service (sk) tokens; legacy
+	// "ls__" tokens are out of scope.
+	reLangSmithToken = regexp.MustCompile(`\blsv2_(?:pt|sk)_[A-Za-z0-9]{40,}\b`)
+	// Brevo (formerly Sendinblue) API key — "xkeysib-" + 60+ hex.
+	reBrevoKey = regexp.MustCompile(`\bxkeysib-[a-f0-9]{60,}\b`)
+	// Terraform Cloud user / team token — "<id>.atlasv1.<secret>". The
+	// ".atlasv1." middle marker is the anchor; both segments carry the
+	// same base64url alphabet.
+	reTerraformCloudToken = regexp.MustCompile(`\b[A-Za-z0-9]{14,}\.atlasv1\.[A-Za-z0-9_\-]{60,}\b`)
+	// Postman API key — "PMAK-" + 24 hex + "-" + 34 hex. Common in CI
+	// pipelines that run newman-based API tests.
+	rePostmanKey = regexp.MustCompile(`\bPMAK-[a-f0-9]{24}-[a-f0-9]{34}\b`)
+	// Sourcegraph personal access token — "sgp_" + 40+ alphanumeric.
+	reSourcegraphToken = regexp.MustCompile(`\bsgp_[A-Za-z0-9]{40,}\b`)
+	// Airtable personal access token — "pat" + 14 base62 + "." + 64 hex.
+	// No keyword pre-filter: "pat" is a common English substring; the
+	// pattern's strict structure (14 chars + dot + 64 hex) is the anchor.
+	reAirtablePAT = regexp.MustCompile(`\bpat[A-Za-z0-9]{14}\.[a-f0-9]{64}\b`)
 	// HTTP Basic Authorization — captures the base64 blob after "Basic ".
 	// Mirrors reBearerToken — both can appear with or without the literal
 	// "Authorization:" header prefix in the same log line.
@@ -514,6 +639,7 @@ func DefaultRules() []Rule {
 		{Kind: KindToken, Re: reJWT, Keyword: "eyJ"},
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
+		{Kind: KindAPIKey, Re: reGitHubFineGrainedPAT, Keyword: "github_pat_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "glpat-"},
 		{Kind: KindAPIKey, Re: reSlackToken, Keyword: "xox"},
 		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
@@ -534,6 +660,45 @@ func DefaultRules() []Rule {
 		{Kind: KindAPIKey, Re: reNotionToken, Keyword: "ntn_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reLinearKey, Keyword: "lin_api_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeWebhook, Keyword: "whsec_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reVaultToken, Keyword: "hv", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSentryToken, Keyword: "sntrys_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePostHogKey, Keyword: "phx_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reReplicateKey, Keyword: "r8_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTailscaleKey, Keyword: "tskey-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reOktaToken, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDatadogHeader, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNewRelicKey, Keyword: "NRAK-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePerplexityKey, Keyword: "pplx-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reFlyIOToken, Keyword: "fm2_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reShopifyToken, Keyword: "shp", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSquareToken, Keyword: "EAAA", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTelegramBot, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDiscordBot, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGroqKey, Keyword: "gsk_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reXAIKey, Keyword: "xai-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNVNGCKey, Keyword: "nvapi-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePlanetScaleKey, Keyword: "pscale_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSupabaseKey, Keyword: "sbp_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBuildkiteKey, Keyword: "bkua_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGrafanaCloudKey, Keyword: "glc_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHoneycombKey, Keyword: "hcaik_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePyPIToken, Keyword: "pypi-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reResendKey, Keyword: "re_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reJFrogKey, Keyword: "AKCp", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSonarToken, Keyword: "sq", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNuGetKey, Keyword: "oy2", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLaunchDarklyKey, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBackblazeB2Key, Keyword: "K00", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHubSpotPAT, Keyword: "pat-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reOpenRouterKey, Keyword: "sk-or-v1-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reXataKey, Keyword: "xau_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reStytchSecret, Keyword: "secret-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLangSmithToken, Keyword: "lsv2_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBrevoKey, Keyword: "xkeysib-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTerraformCloudToken, Keyword: ".atlasv1.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePostmanKey, Keyword: "PMAK-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSourcegraphToken, Keyword: "sgp_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAirtablePAT, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
@@ -584,6 +749,7 @@ func AggressiveRules() []Rule {
 		{Kind: KindToken, Re: reJWT, Keyword: "eyJ"},
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
+		{Kind: KindAPIKey, Re: reGitHubFineGrainedPAT, Keyword: "github_pat_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "glpat-"},
 		{Kind: KindAPIKey, Re: reSlackToken, Keyword: "xox"},
 		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
@@ -604,6 +770,45 @@ func AggressiveRules() []Rule {
 		{Kind: KindAPIKey, Re: reNotionToken, Keyword: "ntn_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reLinearKey, Keyword: "lin_api_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeWebhook, Keyword: "whsec_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reVaultToken, Keyword: "hv", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSentryToken, Keyword: "sntrys_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePostHogKey, Keyword: "phx_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reReplicateKey, Keyword: "r8_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTailscaleKey, Keyword: "tskey-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reOktaToken, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDatadogHeader, CaptureGroup: 1, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNewRelicKey, Keyword: "NRAK-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePerplexityKey, Keyword: "pplx-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reFlyIOToken, Keyword: "fm2_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reShopifyToken, Keyword: "shp", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSquareToken, Keyword: "EAAA", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTelegramBot, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reDiscordBot, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGroqKey, Keyword: "gsk_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reXAIKey, Keyword: "xai-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNVNGCKey, Keyword: "nvapi-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePlanetScaleKey, Keyword: "pscale_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSupabaseKey, Keyword: "sbp_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBuildkiteKey, Keyword: "bkua_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGrafanaCloudKey, Keyword: "glc_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHoneycombKey, Keyword: "hcaik_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePyPIToken, Keyword: "pypi-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reResendKey, Keyword: "re_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reJFrogKey, Keyword: "AKCp", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSonarToken, Keyword: "sq", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNuGetKey, Keyword: "oy2", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLaunchDarklyKey, MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBackblazeB2Key, Keyword: "K00", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reHubSpotPAT, Keyword: "pat-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reOpenRouterKey, Keyword: "sk-or-v1-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reXataKey, Keyword: "xau_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reStytchSecret, Keyword: "secret-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLangSmithToken, Keyword: "lsv2_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reBrevoKey, Keyword: "xkeysib-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTerraformCloudToken, Keyword: ".atlasv1.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: rePostmanKey, Keyword: "PMAK-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSourcegraphToken, Keyword: "sgp_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAirtablePAT, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
