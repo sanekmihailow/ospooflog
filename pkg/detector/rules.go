@@ -681,9 +681,12 @@ func dsnExtra(sub []string) map[string]string {
 	return extra
 }
 
-// DefaultRules is the conservative ruleset used when --aggressive is off.
+// coreRules contains the rules shared across all detection modes — they
+// don't vary by aggressiveness. The three public ruleset functions append
+// their own HOST/USER/PATH/PORT/B64 tail on top of this.
+//
 // Order is priority — first rule wins at any given byte range.
-func DefaultRules() []Rule {
+func coreRules() []Rule {
 	return []Rule{
 		// PRIVKEY first — it spans newlines and embeds base64 that would
 		// otherwise be shredded by IP/UUID/etc.
@@ -784,133 +787,68 @@ func DefaultRules() []Rule {
 		{Kind: KindMAC, Re: reMAC},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
+	}
+}
+
+// tailRules builds the HOST/FQDN/USER/PATH/PORT/B64 tail with mode-specific
+// extras. Each flag enables one of the wider-capture variants:
+//   - host:    catches bare single-label hostnames anchored on "host=" / "node=".
+//   - user:    catches "as alice" / "for alice" outside the strict user= form.
+//   - path:    catches any 2+ segment absolute path, not just /var,/etc,/home.
+//   - port:    catches bare ":NNNN" port numbers.
+//   - b64:     decode-verify on long base64 spans (slowest, most FP-prone).
+func tailRules(host, user, path, port, b64 bool) []Rule {
+	r := []Rule{
 		// HOST before FQDN so .local/.internal names get the "host" treatment
 		// instead of being relabelled as a generic FQDN.
 		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
 		{Kind: KindHost, Re: reHostConservative},
-		{Kind: KindFQDN, Re: reFQDN, Validate: validFQDN},
-		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
-		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
 	}
+	if host {
+		r = append(r, Rule{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1})
+	}
+	r = append(r,
+		Rule{Kind: KindFQDN, Re: reFQDN, Validate: validFQDN},
+		Rule{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
+		Rule{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
+		Rule{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
+	)
+	if user {
+		r = append(r, Rule{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser})
+	}
+	r = append(r, Rule{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1})
+	if path {
+		r = append(r, Rule{Kind: KindPath, Re: rePathAggressive, CaptureGroup: 1})
+	}
+	if port {
+		r = append(r, Rule{Kind: KindPort, Re: rePort, CaptureGroup: 1})
+	}
+	if b64 {
+		// Generic base64 decode-verify runs last so it only inspects spans
+		// not already claimed by higher-precision rules. Emits a Match only
+		// if the decoded text contains a credential-class kind — keeps S3
+		// ETags, pod UIDs, SHA hashes unmasked.
+		r = append(r, Rule{Kind: KindAPIKey, Re: reGenericB64, MinEntropy: 4.5, DecodeBase64: true})
+	}
+	return r
 }
 
-// AggressiveRules adds wider USER/HOST/PATH/PORT capture at the cost of
-// more false positives. Enabled via --aggressive.
+// DefaultRules is the conservative ruleset — strict context required for
+// USER / HOST / PATH, no PORT or generic base64 detection.
+func DefaultRules() []Rule {
+	return append(coreRules(), tailRules(false, false, false, false, false)...)
+}
+
+// BalancedRules adds wider USER ("as alice"), PATH (any abs path) and PORT
+// (":5432") capture without enabling the noisier HOST single-label rule
+// or the generic-B64 decode-verify pass.
+func BalancedRules() []Rule {
+	return append(coreRules(), tailRules(false, true, true, true, false)...)
+}
+
+// AggressiveRules enables every wider-capture variant — single-label
+// HOST, "as alice" USER, any-abs-path PATH, bare PORT, and the
+// generic-B64 decode-verify pass.
 func AggressiveRules() []Rule {
-	return []Rule{
-		{Kind: KindPrivKey, Re: rePEMPrivate, Keyword: "-----BEGIN"},
-		{Re: reSSHAlgIdent, Skip: true},
-		{Kind: KindDSN, Re: reDSN, ExtraFn: dsnExtra},
-		{Kind: KindARN, Re: reARN, ExtraFn: arnExtra, Keyword: "arn:aws"},
-		{Kind: KindPubKey, Re: reSSHPubKey},
-		{Kind: KindPubKey, Re: reSSHPubKeyBare, Keyword: "AAAA"},
-		{Kind: KindFingerprint, Re: reSHA256FP, Keyword: "SHA256:"},
-		{Kind: KindFingerprint, Re: reOCIDigest, Keyword: "sha256:"},
-		{Kind: KindFingerprint, Re: reMD5FP, Keyword: "MD5:"},
-		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1, MinEntropy: 2.0},
-		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1, MinEntropy: 2.0},
-		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1, MinEntropy: 2.0},
-		// JWT before the generic Bearer rule so a JWT-shaped token stays
-		// tagged as TOKEN instead of being relabelled as a generic API key.
-		{Kind: KindToken, Re: reJWT, Keyword: "eyJ", ExtraFn: jwtExtra},
-		{Kind: KindAPIKey, Re: reAWSAccessKey},
-		{Kind: KindAPIKey, Re: reGitHubToken},
-		{Kind: KindAPIKey, Re: reGitHubFineGrainedPAT, Keyword: "github_pat_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "glpat-"},
-		{Kind: KindAPIKey, Re: reSlackToken, Keyword: "xox"},
-		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
-		{Kind: KindAPIKey, Re: reOpenAIKey, Keyword: "T3BlbkFJ"},
-		{Kind: KindAPIKey, Re: reGoogleAPIKey, Keyword: "AIza"},
-		{Kind: KindAPIKey, Re: reNpmToken, Keyword: "npm_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reHFToken, Keyword: "hf_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reDatabricksToken, Keyword: "dapi", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reDopplerToken, Keyword: "dp.pt.", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reDOToken, Keyword: "_v1_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reDynatraceToken, Keyword: "dt0c01.", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reAgeSecretKey, Keyword: "AGE-SECRET-KEY-1", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reAlibabaAK, Keyword: "LTAI", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reAtlassianToken, Keyword: "ATATT3", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reTwilioAPIKey, Keyword: "SK", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reSendGridKey, Keyword: "SG.", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reMailgunKey, Keyword: "key-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reNotionToken, Keyword: "ntn_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reLinearKey, Keyword: "lin_api_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reStripeWebhook, Keyword: "whsec_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reVaultToken, Keyword: "hv", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reSentryToken, Keyword: "sntrys_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: rePostHogKey, Keyword: "phx_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reReplicateKey, Keyword: "r8_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reTailscaleKey, Keyword: "tskey-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reOktaToken, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reDatadogHeader, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reNewRelicKey, Keyword: "NRAK-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: rePerplexityKey, Keyword: "pplx-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reFlyIOToken, Keyword: "fm2_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reShopifyToken, Keyword: "shp", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reSquareToken, Keyword: "EAAA", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reTelegramBot, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reDiscordBot, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reGroqKey, Keyword: "gsk_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reXAIKey, Keyword: "xai-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reNVNGCKey, Keyword: "nvapi-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: rePlanetScaleKey, Keyword: "pscale_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reSupabaseKey, Keyword: "sbp_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reBuildkiteKey, Keyword: "bkua_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reGrafanaCloudKey, Keyword: "glc_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reHoneycombKey, Keyword: "hcaik_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: rePyPIToken, Keyword: "pypi-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reResendKey, Keyword: "re_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reJFrogKey, Keyword: "AKCp", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reSonarToken, Keyword: "sq", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reNuGetKey, Keyword: "oy2", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reLaunchDarklyKey, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reBackblazeB2Key, Keyword: "K00", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reHubSpotPAT, Keyword: "pat-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reOpenRouterKey, Keyword: "sk-or-v1-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reXataKey, Keyword: "xau_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reStytchSecret, Keyword: "secret-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reLangSmithToken, Keyword: "lsv2_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reBrevoKey, Keyword: "xkeysib-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reTerraformCloudToken, Keyword: ".atlasv1.", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: rePostmanKey, Keyword: "PMAK-", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reSourcegraphToken, Keyword: "sgp_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reAirtablePAT, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reGCPPrivateKeyId, CaptureGroup: 1, Keyword: "private_key_id", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reAWSSessionCred, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reStripeKey},
-		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reK8sSecretValue, CaptureGroup: 1, MinEntropy: 4.0},
-		{Kind: KindAPIKey, Re: reB64EnvVar, CaptureGroup: 1, MinEntropy: 4.0},
-		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1, MinEntropy: 3.0},
-		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser, Keyword: "'@'"},
-		{Kind: KindUUID, Re: reUUID},
-		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
-		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},
-		{Kind: KindPhone, Re: rePhoneContext, CaptureGroup: 1, Validate: validPhone},
-		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
-		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
-		{Kind: KindMAC, Re: reMAC},
-		{Kind: KindIP, Re: reIP, Validate: validIPv4},
-		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
-		{Kind: KindHost, Re: reHostSyslog, CaptureGroup: 1, Validate: validSyslogHost},
-		{Kind: KindHost, Re: reHostConservative},
-		{Kind: KindHost, Re: reHostAggressive, CaptureGroup: 1},
-		{Kind: KindFQDN, Re: reFQDN, Validate: validFQDN},
-		{Kind: KindUser, Re: reUserConservative, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindUser, Re: reUserSSHD, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
-		{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser},
-		{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1},
-		{Kind: KindPath, Re: rePathAggressive, CaptureGroup: 1},
-		{Kind: KindPort, Re: rePort, CaptureGroup: 1},
-		// Generic base64 decode-verify. Runs last so it only inspects spans
-		// not already claimed by higher-precision rules. Decodes the capture
-		// and emits a Match only if the decoded text contains a credential-
-		// class kind — keeps S3 ETags, pod UIDs, SHA hashes unmasked.
-		{Kind: KindAPIKey, Re: reGenericB64, MinEntropy: 4.5, DecodeBase64: true},
-	}
+	return append(coreRules(), tailRules(true, true, true, true, true)...)
 }

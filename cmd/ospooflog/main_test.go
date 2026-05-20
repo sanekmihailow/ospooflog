@@ -93,6 +93,74 @@ Recommended steps:
 	}
 }
 
+func TestMode_BalancedEnablesAsAliceButNotSingleLabelHost(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	sessionFile := filepath.Join(dir, "session.json")
+
+	// "as alice" only fires under balanced+ ; "host=db-prod" only under aggressive.
+	if err := os.WriteFile(logFile, []byte("running as alice host=db-prod start"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--mode", "balanced", "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "alice") {
+		t.Errorf("balanced should mask 'alice' from 'as alice':\n%s", got)
+	}
+	if !strings.Contains(string(got), "db-prod") {
+		t.Errorf("balanced should NOT mask single-label HOST 'db-prod':\n%s", got)
+	}
+}
+
+func TestMode_UnknownValueErrors(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	if err := os.WriteFile(logFile, []byte("foo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"-i", logFile, "-o", filepath.Join(dir, "out"), "-s", filepath.Join(dir, "s.json"), "--mode", "yolo", "obfuscate"})
+	if err == nil {
+		t.Fatal("expected error for unknown --mode value")
+	}
+	if !strings.Contains(err.Error(), "unknown --mode") {
+		t.Errorf("error should mention unknown --mode, got: %v", err)
+	}
+}
+
+func TestFastRestore_FallsForSubstringTrap(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	aiFile := filepath.Join(dir, "ai.txt")
+	resultFile := filepath.Join(dir, "result.txt")
+	sessionFile := filepath.Join(dir, "session.json")
+
+	if err := os.WriteFile(logFile, []byte("connect 10.23.41.5 done"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	aiText := "see 192.168.1.10 for context"
+	if err := os.WriteFile(aiFile, []byte(aiText), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", aiFile, "-o", resultFile, "-s", sessionFile, "--fast-restore", "restore"}); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(resultFile)
+	// Fast mode falls for the trap: replaces "192.168.1.1" inside "192.168.1.10".
+	if !strings.Contains(string(got), "10.23.41.50") {
+		t.Errorf("expected fast-restore substring trap to produce '10.23.41.50' in: %s", got)
+	}
+}
+
 func TestRoundTrip_StrictMode(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "log.txt")

@@ -105,6 +105,27 @@ func TestUser_AggressiveAddsAsFor(t *testing.T) {
 	}
 }
 
+func TestBalancedMode_EnablesUserAndPathAndPortButNotHostOrB64(t *testing.T) {
+	balanced := New(BalancedRules())
+
+	// USER "as alice" — balanced enables.
+	if k := findKinds(balanced.Find("running as alice")); k[KindUser] == 0 {
+		t.Errorf("balanced should fire USER on 'as alice'")
+	}
+	// PATH /abs/path — balanced enables.
+	if k := findKinds(balanced.Find("open /custom/data/file.txt")); k[KindPath] == 0 {
+		t.Errorf("balanced should fire PATH on '/custom/data/file.txt'")
+	}
+	// PORT — balanced enables.
+	if k := findKinds(balanced.Find("listen :5432 ready")); k[KindPort] == 0 {
+		t.Errorf("balanced should fire PORT on ':5432'")
+	}
+	// HOST single-label (host=db-prod) — balanced must NOT fire (only aggressive does).
+	if k := findKinds(balanced.Find("host=db-prod connected")); k[KindHost] != 0 {
+		t.Errorf("balanced must not fire single-label HOST on 'host=db-prod'")
+	}
+}
+
 func TestHost_LocalInternalSuffix(t *testing.T) {
 	text := "connect to db-prod.internal and api.svc.local"
 	matches := New(DefaultRules()).Find(text)
