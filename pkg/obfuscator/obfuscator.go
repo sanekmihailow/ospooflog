@@ -35,6 +35,14 @@ func (o *Obfuscator) Obfuscate(text string) string {
 			// Defensive: detector must hand back non-overlapping matches.
 			continue
 		}
+		// Pre-register any "claim:<KIND>" Extra values (set by jwtExtra)
+		// so identical values appearing bare elsewhere in this run map
+		// to the same fake. mapper.Obfuscate is idempotent on origin.
+		for k, v := range m.Extra {
+			if kindStr, ok := strings.CutPrefix(k, "claim:"); ok {
+				o.mapper.Obfuscate(v, detector.EntityKind(kindStr), nil)
+			}
+		}
 		b.WriteString(text[pos:m.Start])
 		_, replace := o.mapper.Obfuscate(m.Value, m.Kind, m.Extra)
 		b.WriteString(replace)

@@ -69,3 +69,33 @@ func TestObfuscate_StableMappingAcrossCalls(t *testing.T) {
 		t.Errorf("not stable: %q vs %q", out1, out2)
 	}
 }
+
+func TestObfuscate_JWTClaimsShareFakeWithBareValuesElsewhere(t *testing.T) {
+	// Header + payload that decodes to {"email":"alice@corp.com"} + sig.
+	jwt := "eyJhbGciOiJIUzI1NiJ9." +
+		"eyJlbWFpbCI6ImFsaWNlQGNvcnAuY29tIn0." +
+		"dummysignatureXYZ"
+	m := mapper.New(replacer.New())
+	o := New(detector.New(detector.DefaultRules()), m)
+
+	// Bare email appears AFTER the JWT — pre-registration from jwtExtra
+	// must let the second occurrence resolve to the same fake.
+	out := o.Obfuscate("token=" + jwt + " sender=alice@corp.com")
+
+	var emailFake string
+	for _, e := range m.Entries() {
+		if e.Kind == detector.KindEmail && e.Origin == "alice@corp.com" {
+			emailFake = e.Replace
+			break
+		}
+	}
+	if emailFake == "" {
+		t.Fatal("alice@corp.com from JWT claim was not registered in mapper")
+	}
+	if !strings.Contains(out, emailFake) {
+		t.Errorf("bare alice@corp.com should have been swapped for %q in %q", emailFake, out)
+	}
+	if strings.Contains(out, "alice@corp.com") {
+		t.Errorf("origin email leaked into output: %q", out)
+	}
+}

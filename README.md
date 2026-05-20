@@ -117,7 +117,7 @@ ospooflog -s session.json show
 
 ### Covered providers:
 
-- AWS `AKIA…`,
+- AWS `AKIA…` / `AWS_SECRET_ACCESS_KEY=…` / `AWS_SESSION_TOKEN=…`,
 - Airtable `pat<id>.<secret>`,
 - Anthropic `sk-ant-…`,
 - Atlassian `ATATT3…`,
@@ -127,6 +127,7 @@ ospooflog -s session.json show
 - Datadog `DD-API-KEY:…`,
 - Discord bot,
 - Fly.io `fm2_…`,
+- GCP service-account `"private_key_id":…`,
 - GitHub `ghp_…` / `github_pat_…`,
 - GitLab `glpat-…`,
 - Google `AIza…`,
