@@ -602,6 +602,11 @@ func TestAPIKey_NewProviderTokens(t *testing.T) {
 		{"aws-session-env", "AWS_SESSION_TOKEN=" + alphanumN(40)},
 		{"aws-secret-json", `"SecretAccessKey": "` + alphanumN(40) + `"`},
 		{"aws-session-json", `"SessionToken": "` + alphanumN(40) + `"`},
+		{"gcp-project-json", `"project_id": "my-test-project-12345"`},
+		{"gcp-project-env", "PROJECT_ID=my-test-project-12345"},
+		{"gcp-project-cli-eq", "--project=my-test-project-12345"},
+		{"gcp-project-cli-space", "--project my-test-project-12345"},
+		{"gcp-sa-client-id", `"client_id": "123456789012345678901"`},
 	}
 	for _, tc := range cases {
 		matches := New(DefaultRules()).Find(tc.text)

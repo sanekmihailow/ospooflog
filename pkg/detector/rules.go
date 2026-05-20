@@ -346,6 +346,20 @@ var (
 	// reAWSAccessKey. Covers both snake_case env-var / credentials-file
 	// form and PascalCase JSON form (e.g. "SecretAccessKey": "…").
 	reAWSSessionCred = regexp.MustCompile(`(?i)\b(?:aws_secret_access_key|secretaccesskey|aws_session_token|sessiontoken)\s*['"]?\s*[=:]\s*['"]?([A-Za-z0-9_/+=\-]{20,})`)
+	// GCP project id — identifying string that ties resources to one org.
+	// Caught in JSON ("project_id":"foo"), env (PROJECT_ID=foo) and CLI
+	// (--project=foo / --project foo) forms. Project IDs follow the
+	// "letter + 5–29 base-36-ish chars with dashes" GCP naming rule.
+	//
+	// The separator alternation (?:\s*[=:]\s*|\s+) is needed because the
+	// CLI form uses a bare space ("--project foo") while JSON/env use ":"
+	// or "=" possibly without surrounding whitespace.
+	reGCPProjectId = regexp.MustCompile(`(?i)(?:--project|\bproject[_-]?id)['"]?(?:\s*[=:]\s*|\s+)['"]?([a-z][-a-z0-9]{5,29})\b`)
+	// GCP service-account numeric client id — exactly 21 digits.
+	// Distinct from OAuth client IDs which carry letters/dashes plus the
+	// ".apps.googleusercontent.com" suffix and don't need special masking
+	// (they're often public on the OAuth-client side).
+	reGCPSAClientId = regexp.MustCompile(`(?i)"client_id"\s*:\s*"(\d{21})"`)
 	// HTTP Basic Authorization — captures the base64 blob after "Basic ".
 	// Mirrors reBearerToken — both can appear with or without the literal
 	// "Authorization:" header prefix in the same log line.
@@ -769,6 +783,8 @@ func coreRules() []Rule {
 		{Kind: KindAPIKey, Re: reSourcegraphToken, Keyword: "sgp_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAirtablePAT, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reGCPPrivateKeyId, CaptureGroup: 1, Keyword: "private_key_id", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reGCPProjectId, CaptureGroup: 1, Keyword: "project", MinEntropy: 2.5},
+		{Kind: KindAPIKey, Re: reGCPSAClientId, CaptureGroup: 1, Keyword: "client_id", MinEntropy: 2.5},
 		{Kind: KindAPIKey, Re: reAWSSessionCred, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
