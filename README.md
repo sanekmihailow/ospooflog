@@ -21,6 +21,21 @@ internally as the stable mapping key but never leaves the tool.
 
 ## Install
 
+### Prebuilt binaries
+
+Download from the [releases page](https://github.com/sanekmihailow/ospooflog/releases).
+Each release ships statically-linked binaries for Linux / macOS / Windows
+(amd64 and arm64) plus a `SHA256SUMS` file. Drop the binary into your
+`$PATH` and run.
+
+```sh
+# example for Linux amd64
+curl -L -o ospooflog https://github.com/sanekmihailow/ospooflog/releases/latest/download/ospooflog-linux-amd64
+chmod +x ospooflog && sudo mv ospooflog /usr/local/bin/
+```
+
+### From source
+
 Requires Go 1.21+. Install Go from <https://go.dev/dl/> or via a package
 manager (see per-platform notes below).
 
