@@ -179,6 +179,9 @@ func (c *Chain) Find(text string) []Match {
 			if isPlaceholder(value) {
 				continue
 			}
+			if protectedValues[strings.ToLower(value)] {
+				continue
+			}
 			if rule.DecodeBase64 {
 				decoded, ok := tryB64Decode(value)
 				if !ok {

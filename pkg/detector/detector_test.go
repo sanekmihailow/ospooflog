@@ -3,6 +3,7 @@ package detector
 import (
 	"encoding/base64"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -299,6 +300,95 @@ func TestEmail(t *testing.T) {
 	matches := New(DefaultRules()).Find(text)
 	if c := findKinds(matches); c[KindEmail] != 1 {
 		t.Errorf("want 1 EMAIL, got %d", c[KindEmail])
+	}
+}
+
+func TestEmail_RejectsSystemdUnitInstances(t *testing.T) {
+	// systemd template-unit instance names are email-shaped but never user
+	// addresses — see modprobe@configfs.service, user@1000.service.
+	cases := []string{
+		"modprobe@configfs.service: Deactivated successfully.",
+		"Finished modprobe@dm_mod.service - Load Kernel Module dm_mod.",
+		"user@1000.service entered failed state",
+		"sys-fs-fuse-connections@instance.mount triggered",
+	}
+	for _, text := range cases {
+		matches := New(DefaultRules()).Find(text)
+		if c := findKinds(matches); c[KindEmail] != 0 {
+			t.Errorf("text=%q: expected 0 EMAIL matches, got %d (matches=%+v)", text, c[KindEmail], matches)
+		}
+	}
+}
+
+func TestProtectedValues_LeftAlone(t *testing.T) {
+	cases := []struct {
+		text    string
+		preserve string // substring that must remain in the output
+	}{
+		{"host=localhost connected", "localhost"},
+		{"USER=root COMMAND=/bin/sh", "root"},
+		{"mysql --login-path=localRoot", "mysql"},
+		{"opened for user system(uid=0)", "system"},
+	}
+	for _, tc := range cases {
+		matches := New(BalancedRules()).Find(tc.text)
+		// None of the protected values should appear as a captured match.
+		for _, m := range matches {
+			if strings.EqualFold(m.Value, tc.preserve) {
+				t.Errorf("text=%q: protected value %q was captured by rule (kind=%s)", tc.text, tc.preserve, m.Kind)
+			}
+		}
+	}
+}
+
+func TestProtectedValues_DoNotShadowNeighbouringMatches(t *testing.T) {
+	// reMySQLUserAt's whole match spans 'vtiger_user'@'localhost'. The
+	// value-level protectedValues filter must not prevent vtiger_user
+	// from being captured just because localhost sits in the same span.
+	text := "Access denied for user 'vtiger_user'@'localhost'"
+	matches := New(DefaultRules()).Find(text)
+	var hitVtiger bool
+	for _, m := range matches {
+		if m.Value == "vtiger_user" {
+			hitVtiger = true
+		}
+		if m.Value == "localhost" {
+			t.Errorf("localhost should be protected, got captured match: %+v", m)
+		}
+	}
+	if !hitVtiger {
+		t.Errorf("vtiger_user should still be captured despite neighbouring localhost (matches=%+v)", matches)
+	}
+}
+
+func TestSystemdUserPAM_NotMisreadAsUserKeyword(t *testing.T) {
+	// "systemd-user:" is the PAM service identifier — the Skip-rule
+	// claims the range so reUserConservative doesn't grab "session"
+	// (or "auth" / "account") as a misread username.
+	text := "pam_unix(systemd-user:session): session opened for user alice(uid=1001)"
+	matches := New(DefaultRules()).Find(text)
+	for _, m := range matches {
+		if m.Kind == KindUser && (m.Value == "session" || m.Value == "auth" || m.Value == "account") {
+			t.Errorf("PAM service name %q misread as USER", m.Value)
+		}
+	}
+}
+
+func TestFQDN_RejectsSourceFileExtensions(t *testing.T) {
+	// .py, .rb, .go, .sh look like TLDs but in dev logs they're almost
+	// always source files. Blacklisted so things like main.py / util.rb
+	// don't get masked as FQDN.
+	cases := []string{
+		"log_util.py[DEBUG]: starting",
+		"main.py loaded",
+		"app.rb is the entry point",
+		"build.sh exited 0",
+	}
+	for _, text := range cases {
+		matches := New(DefaultRules()).Find(text)
+		if c := findKinds(matches); c[KindFQDN] != 0 {
+			t.Errorf("text=%q: expected 0 FQDN matches, got %d (matches=%+v)", text, c[KindFQDN], matches)
+		}
 	}
 }
 
