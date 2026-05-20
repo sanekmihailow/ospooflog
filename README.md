@@ -94,7 +94,7 @@ ospooflog -s session.json show
 |----------|---------------------------------------------------------|------------------------------------------------|
 | DSN      | `postgres://alice:pwd@db:5432/appdb`                    | `postgres://user1:strong_password@localhost:5432/mydb1` |
 | ARN      | `arn:aws:s3:::secrets/key`                              | `arn:aws:s3::000000000000:fake-resource/n1` (service/region preserved) |
-| APIKEY   | AWS `AKIA…`, GitHub `ghp_…`, GitLab `glpat-…`, Slack `xox[abprs]-…`, Anthropic `sk-ant-…`, OpenAI `sk-…T3BlbkFJ…`, Google `AIza…`, Stripe `sk_live_…`, `Bearer X`, `api_key=…`, `secret=…`, `access_token=…` | `FAKE_API_KEY_001` |
+| APIKEY   | AWS `AKIA…`, GitHub `ghp_…`, GitLab `glpat-…`, Slack `xox[abprs]-…`, Anthropic `sk-ant-…`, OpenAI `sk-…T3BlbkFJ…`, Google `AIza…`, Stripe `sk_live_…` / `whsec_…`, Atlassian `ATATT3…`, Twilio `SK…`, SendGrid `SG.…`, Mailgun `key-…`, Notion `ntn_…`, Linear `lin_api_…`, `Bearer X`, `api_key=…`, `secret=…`, `access_token=…` | `FAKE_API_KEY_001` |
 | TOKEN    | `eyJhbGciOiJIUzI1NiJ9.eyJzdWIi…` (JWT)                  | fake JWT-shaped string                         |
 | PWD      | `password=hunter2`, `IDENTIFIED BY 'secret'`            | `FAKE_PASSWORD_001`                            |
 | PUBKEY   | `ssh-rsa AAAAB3NzaC1…`                                  | `ssh-rsa AAAAFAKEPUBKEY0001`                   |

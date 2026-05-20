@@ -483,6 +483,13 @@ func TestAPIKey_NewProviderTokens(t *testing.T) {
 		{"dynatrace", "dt0c01." + alphanumN(24) + "." + alphanumN(64)},
 		{"age", "AGE-SECRET-KEY-1" + bech32UN(58)},
 		{"alibaba", "LTAI" + alphanumN(20)},
+		{"atlassian", "ATATT3" + alphanumN(186)},
+		{"twilio", "SK" + hexN(32)},
+		{"sendgrid", "SG." + alphanumN(66)},
+		{"mailgun", "key-" + hexN(32)},
+		{"notion", "ntn_" + cycled("0123456789", 11) + alphanumN(35)},
+		{"linear", "lin_api_" + alphanumN(40)},
+		{"stripe-webhook", "whsec_" + alphanumN(40)},
 	}
 	for _, tc := range cases {
 		matches := New(DefaultRules()).Find(tc.text)

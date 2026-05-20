@@ -188,6 +188,25 @@ var (
 	// Alibaba Cloud access key ID — "LTAI" + 20 alphanumeric chars.
 	// Distinct from AWS AKIA (base32, 16 chars) by both prefix and alphabet.
 	reAlibabaAK = regexp.MustCompile(`\bLTAI[a-zA-Z0-9]{20}\b`)
+	// Atlassian API token (Jira / Confluence / Bitbucket Cloud) — "ATATT3"
+	// + 186 base64url chars. One regex covers all Atlassian products that
+	// share the cloud token format.
+	reAtlassianToken = regexp.MustCompile(`\bATATT3[A-Za-z0-9_\-=]{186}\b`)
+	// Twilio API key — "SK" + 32 lowercase hex. Distinct from Account SIDs
+	// ("AC" + 32 hex) which are public identifiers and don't need masking.
+	reTwilioAPIKey = regexp.MustCompile(`\bSK[0-9a-f]{32}\b`)
+	// SendGrid API key — "SG." + 66 chars from a base64-ish charset.
+	reSendGridKey = regexp.MustCompile(`\bSG\.[A-Za-z0-9=_\-.]{66}\b`)
+	// Mailgun private API token — "key-" + 32 lowercase hex.
+	reMailgunKey = regexp.MustCompile(`\bkey-[a-f0-9]{32}\b`)
+	// Notion integration token — "ntn_" + 11 digits + 35 alphanumeric.
+	reNotionToken = regexp.MustCompile(`\bntn_[0-9]{11}[A-Za-z0-9]{35}\b`)
+	// Linear API key — "lin_api_" + 40 alphanumeric (case-insensitive).
+	reLinearKey = regexp.MustCompile(`(?i)\blin_api_[A-Za-z0-9]{40}\b`)
+	// Stripe webhook signing secret — "whsec_" + 32+ alphanumeric.
+	// Distinct from reStripeKey (sk_/rk_) which catches secret/restricted
+	// API keys but not webhook signatures.
+	reStripeWebhook = regexp.MustCompile(`\bwhsec_[A-Za-z0-9]{32,}\b`)
 	// HTTP Basic Authorization — captures the base64 blob after "Basic ".
 	// Mirrors reBearerToken — both can appear with or without the literal
 	// "Authorization:" header prefix in the same log line.
@@ -508,6 +527,13 @@ func DefaultRules() []Rule {
 		{Kind: KindAPIKey, Re: reDynatraceToken, Keyword: "dt0c01.", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAgeSecretKey, Keyword: "AGE-SECRET-KEY-1", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAlibabaAK, Keyword: "LTAI", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAtlassianToken, Keyword: "ATATT3", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTwilioAPIKey, Keyword: "SK", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSendGridKey, Keyword: "SG.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reMailgunKey, Keyword: "key-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNotionToken, Keyword: "ntn_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLinearKey, Keyword: "lin_api_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reStripeWebhook, Keyword: "whsec_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
@@ -571,6 +597,13 @@ func AggressiveRules() []Rule {
 		{Kind: KindAPIKey, Re: reDynatraceToken, Keyword: "dt0c01.", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAgeSecretKey, Keyword: "AGE-SECRET-KEY-1", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reAlibabaAK, Keyword: "LTAI", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reAtlassianToken, Keyword: "ATATT3", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reTwilioAPIKey, Keyword: "SK", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reSendGridKey, Keyword: "SG.", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reMailgunKey, Keyword: "key-", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reNotionToken, Keyword: "ntn_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reLinearKey, Keyword: "lin_api_", MinEntropy: 3.0},
+		{Kind: KindAPIKey, Re: reStripeWebhook, Keyword: "whsec_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reStripeKey},
 		{Kind: KindAPIKey, Re: reBearerToken, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reBasicAuth, CaptureGroup: 1, MinEntropy: 3.0},
