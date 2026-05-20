@@ -29,10 +29,100 @@ import (
 // sees the text — the value has been rewritten to a placeholder and is
 // no longer in the input when this filter runs.
 var protectedValues = map[string]bool{
+	// Generic system identifiers
 	"localhost": true,
 	"mysql":     true,
 	"root":      true,
 	"system":    true,
+	// Public software / OS vendor domains — masking these loses meaning
+	// for the AI (an "image is on serviceN.example.com" is useless;
+	// "image is on docker.io" is real context).
+	"docker.io":         true,
+	"kubernetes.io":     true,
+	"k8s.io":            true,
+	"k3s.io":            true,
+	"redhat.com":        true,
+	"ubuntu.com":        true,
+	"kernel.org":        true,
+	"launchpad.net":     true,
+	"cloudinit.net":     true,
+	"openssh.com":       true,
+	"libssh.org":        true,
+	"rsyslog.com":       true,
+	"cattle.io":         true,
+	"traefik.io":        true,
+	// Code-hosting platforms.
+	"github.com":        true,
+	"gitlab.com":        true,
+	"bitbucket.org":     true,
+	// Container registries — same reasoning.
+	"gcr.io":            true,
+	"ghcr.io":           true,
+	"quay.io":           true,
+	"registry.k8s.io":   true,
+	"mcr.microsoft.com": true,
+	"public.ecr.aws":    true,
+}
+
+// protectedDomainSuffixes is the slice form of protectedValues entries
+// that contain a dot — used by isProtectedValue to also match subdomains
+// (api.github.com matches github.com, eu.gcr.io matches gcr.io, etc.).
+// Built once at init time from protectedValues for fast iteration.
+var protectedDomainSuffixes = func() []string {
+	out := make([]string, 0, 16)
+	for k := range protectedValues {
+		if strings.Contains(k, ".") {
+			out = append(out, k)
+		}
+	}
+	return out
+}()
+
+// protectedSlugSuffixes catch identifiers where a protected domain is
+// glued to a hash via a hyphen rather than a dot — most often k8s pod
+// volume mount slugs like
+// "06ffcef5\x2da444\x2d…\x2d57407e7a75aa-volumes-kubernetes.io". The
+// "kubernetes.io" tail is meaningful context (it's the platform), the
+// preceding pod UID is internal state — preserve the whole thing so
+// the line stays readable and the AI knows it's a k8s mount.
+var protectedSlugSuffixes = []string{
+	"volumes-kubernetes.io",
+}
+
+// isProtectedValue checks the value against protectedValues for exact
+// match, then ".suffix" subdomain match, then bare-suffix slug match,
+// then (for email-shaped values) the domain part. Case-insensitive.
+func isProtectedValue(s string) bool {
+	low := strings.ToLower(s)
+	if protectedValues[low] {
+		return true
+	}
+	for _, d := range protectedDomainSuffixes {
+		if strings.HasSuffix(low, "."+d) {
+			return true
+		}
+	}
+	for _, d := range protectedSlugSuffixes {
+		if strings.HasSuffix(low, d) {
+			return true
+		}
+	}
+	// Email-shape: check the domain half against the same allowlist.
+	// Skips public-list emails like "dm-devel@redhat.com" embedded in
+	// kernel boot messages without affecting masking of regular
+	// "<user>@<corporate-domain>" addresses elsewhere.
+	if at := strings.LastIndexByte(low, '@'); at > 0 && at < len(low)-1 {
+		domain := low[at+1:]
+		if protectedValues[domain] {
+			return true
+		}
+		for _, d := range protectedDomainSuffixes {
+			if domain == d || strings.HasSuffix(domain, "."+d) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // reSystemdUserPAM is a Skip-rule pattern: "systemd-user:" is a PAM
@@ -464,7 +554,13 @@ var validTLDs = func() map[string]bool {
 			m[t] = true
 		}
 	}
-	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh"} {
+	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh", "arpa"} {
+		delete(m, t)
+	}
+	// systemd unit-type extensions look like TLDs (.target was applied for
+	// by Target Corp) but in log content they're almost always systemd
+	// unit names like "network.target" / "ssh.service".
+	for t := range systemdUnitSuffixes {
 		delete(m, t)
 	}
 	return m
@@ -486,14 +582,23 @@ var systemdUnitSuffixes = map[string]bool{
 	"service": true, "target": true, "mount": true, "socket": true,
 	"timer": true, "path": true, "swap": true, "device": true,
 	"scope": true, "slice": true, "automount": true,
+	// systemd-networkd unit types.
+	"network": true, "netdev": true, "link": true,
 }
 
-// validEmail rejects matches that are actually SSH algorithm identifiers
-// or systemd unit instances. SSH names use openssh.com / libssh.org as a
-// fake "domain" half (e.g. "chacha20-poly1305@openssh.com") and the
-// RFC-shaped "<alg>-cert-v01@..." host-key identifiers. systemd templates
-// shape "name@instance.<unit-type>" which trips reEmail because the unit
-// type acts as a TLD.
+// validEmail accepts only matches whose domain ends in a real IANA TLD,
+// plus a couple of explicit rejections:
+//
+//   - SSH algorithm-shaped strings ("chacha20-poly1305@openssh.com",
+//     "rsa-sha2-512-cert-v01@openssh.com"). openssh.com / libssh.org
+//     are TLD-valid, so explicit rejection is still needed.
+//
+//   - systemd unit instances ("modprobe@configfs.service") — .service
+//     etc. are deleted from validTLDs at init time, so the TLD check
+//     below already covers them without an explicit list here.
+//
+//   - Go module paths ("client-go@v1.33.6-k3s1") and other "<word>@<word>"
+//     accidents — their tail isn't a TLD, so the IANA check rejects them.
 func validEmail(s string) bool {
 	at := strings.LastIndexByte(s, '@')
 	if at <= 0 {
@@ -503,10 +608,9 @@ func validEmail(s string) bool {
 	if domain == "openssh.com" || domain == "libssh.org" {
 		return false
 	}
-	if dot := strings.LastIndexByte(domain, '.'); dot >= 0 {
-		if systemdUnitSuffixes[domain[dot+1:]] {
-			return false
-		}
+	dot := strings.LastIndexByte(domain, '.')
+	if dot < 0 || !validTLDs[domain[dot+1:]] {
+		return false
 	}
 	return !reSSHAlgLocalPart.MatchString(s[:at])
 }
@@ -534,6 +638,24 @@ var userStopWords = map[string]bool{
 // OS names rather than account names. Lowercase compare so "Ubuntu" and
 // "ubuntu" both get filtered. Real account names like "root", "system",
 // or any digits/underscores form (user1, vtiger_user) are unaffected.
+// validPassword rejects "passwords" that are obviously not passwords —
+// sudo logs ship "PWD=/home/system" (Present Working Directory) and
+// rePasswordAssign's case-insensitive "pwd" matches "PWD". A value that
+// starts with "/" or looks like a Windows path is the working dir, not
+// a password.
+func validPassword(s string) bool {
+	if s == "" {
+		return false
+	}
+	if s[0] == '/' || s[0] == '\\' {
+		return false
+	}
+	if len(s) >= 3 && s[1] == ':' && (s[2] == '\\' || s[2] == '/') {
+		return false // C:\Users\... / C:/Users/...
+	}
+	return true
+}
+
 func validUser(s string) bool {
 	return !userStopWords[strings.ToLower(s)]
 }
@@ -773,7 +895,7 @@ func coreRules() []Rule {
 		{Kind: KindFingerprint, Re: reOCIDigest, Keyword: "sha256:"},
 		{Kind: KindFingerprint, Re: reMD5FP, Keyword: "MD5:"},
 		{Kind: KindPassword, Re: reSQLIdentifiedBy, CaptureGroup: 1, MinEntropy: 2.0},
-		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1, MinEntropy: 2.0},
+		{Kind: KindPassword, Re: rePasswordAssign, CaptureGroup: 1, MinEntropy: 2.0, Validate: validPassword},
 		{Kind: KindPassword, Re: rePasswordFlag, CaptureGroup: 1, MinEntropy: 2.0},
 		// JWT before the generic Bearer rule so a JWT-shaped token stays
 		// tagged as TOKEN instead of being relabelled as a generic API key.
