@@ -127,7 +127,7 @@ ospooflog -s session.json show
 - Datadog `DD-API-KEY:…`,
 - Discord bot,
 - Fly.io `fm2_…`,
-- GCP service-account `"private_key_id":…`,
+- GCP service-account `"private_key_id":…` / `"client_id":…` (21-digit) / `project_id` (JSON, env, `--project` flag),
 - GitHub `ghp_…` / `github_pat_…`,
 - GitLab `glpat-…`,
 - Google `AIza…`,
