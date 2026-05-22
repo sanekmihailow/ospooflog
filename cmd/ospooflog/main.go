@@ -30,19 +30,18 @@ type opts struct {
 	Input         string `short:"i" long:"input" description:"input file (default: stdin)"`
 	Output        string `short:"o" long:"output" description:"output file (default: stdout)"`
 	Session       string `short:"s" long:"session" description:"session file (required)" required:"true"`
-	Mode          string `long:"mode" description:"detection breadth: safe | balanced | aggressive" default:"safe"`
+	Mode          string `long:"mode" description:"detection breadth — safe: strict context only | balanced: + 'as alice' / abs paths / bare ports | aggressive: + single-label HOST / base64 decode-verify" default:"safe"`
 	Aggressive    bool   `long:"aggressive" description:"deprecated alias for --mode aggressive"`
-	FastRestore   bool   `long:"fast-restore" description:"opt out of word-boundary aware restore (faster, but vulnerable to substring traps)"`
+	FastRestore   bool   `long:"fast-restore" description:"opt out of word-boundary aware restore — faster, but a registered fake that's a prefix of an unrelated string in the AI response will be wrongly replaced"`
 	StrictRestore bool   `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
-	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or session"`
-	Overrides     string `long:"overrides" description:"YAML file with custom origin→replace pairs"`
-	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON and obfuscate string leaves (NDJSON)"`
-	AllowKeys     string `long:"allow-keys" description:"comma-separated JSON keys to skip in --json mode (e.g. level,timestamp,msg)"`
-	Dbg           bool   `long:"dbg" description:"debug logging on stderr"`
-
-	Obfuscate struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes"`
-	Restore   struct{} `command:"restore" description:"restore originals in an AI response using the session file"`
-	Show      struct{} `command:"show" description:"print the current session mapping as a table"`
+	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
+	Overrides     string `long:"overrides" description:"YAML file with fixed origin → replace pairs that win over the built-in templates; plain-text mode only (NUL placeholders collide with JSON)"`
+	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
+	AllowKeys     string `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
+	Dbg           bool   `long:"dbg" description:"debug logging on stderr (session load count, match dumps in dry-run)"`
+	Obfuscate struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes, persist the mapping to the session file"`
+	Restore   struct{} `command:"restore" description:"reverse pass — restore originals in an AI response using the session file"`
+	Show      struct{} `command:"show" description:"print the current session mapping as a TOKEN/KIND/ORIGIN/REPLACE table"`
 }
 
 func main() {

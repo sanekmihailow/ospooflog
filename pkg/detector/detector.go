@@ -179,6 +179,10 @@ func (c *Chain) Find(text string) []Match {
 			if isPlaceholder(value) {
 				continue
 			}
+			if isProtectedValue(value) {
+				continue
+			}
+
 			if rule.DecodeBase64 {
 				decoded, ok := tryB64Decode(value)
 				if !ok {
@@ -248,6 +252,10 @@ var placeholderWords = map[string]bool{
 	"none":        true,
 	"nil":         true,
 	"n/a":         true,
+	// Ansible's literal stand-in printed in place of a parameter value
+	// when no_log:true is set or the field is on the no-log allowlist
+	// (password, passphrase, etc.). Always appears verbatim in logs.
+	"not_logging_parameter": true,
 }
 
 // isPlaceholder returns true if value is clearly a stand-in (template var,
