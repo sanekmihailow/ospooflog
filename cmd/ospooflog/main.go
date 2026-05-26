@@ -35,6 +35,7 @@ type opts struct {
 	FastRestore   bool   `long:"fast-restore" description:"opt out of word-boundary aware restore — faster, but a registered fake that's a prefix of an unrelated string in the AI response will be wrongly replaced"`
 	StrictRestore bool   `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
 	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
+	Diff          bool   `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
 	Overrides     string `long:"overrides" description:"YAML file with fixed origin → replace pairs that win over the built-in templates; plain-text mode only (NUL placeholders collide with JSON)"`
 	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
@@ -122,6 +123,9 @@ func rulesForMode(mode string, deprecatedAggressive bool) ([]detector.Rule, erro
 }
 
 func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
+	if o.DryRun && o.Diff {
+		return errors.New("--diff and --dry-run are mutually exclusive")
+	}
 	rules, err := rulesForMode(o.Mode, o.Aggressive)
 	if err != nil {
 		return err
@@ -132,6 +136,7 @@ func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
 	if err != nil {
 		return err
 	}
+	originalText := text
 
 	// Literal sed-style overrides: replace every occurrence of origin with a
 	// NUL-bracketed placeholder before detection so (a) the detector cannot
@@ -179,6 +184,9 @@ func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
 	}
 	for i, s := range ovSlots {
 		result = strings.ReplaceAll(result, fmt.Sprintf("\x00OVR%d\x00", i), s.replace)
+	}
+	if o.Diff {
+		return printDiff(out, originalText, result)
 	}
 	if _, err := out.Write([]byte(result)); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -234,6 +242,56 @@ func runShow(o opts, m *mapper.Mapper) error {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", e.Token, e.Kind, e.Origin, e.Replace)
 	}
 	return tw.Flush()
+}
+
+// printDiff writes a per-line diff: each line where the obfuscated text
+// differs from the original becomes a "- original\n+ obfuscated\n" pair.
+// Unchanged lines are skipped. If a single mask replaced a multi-line
+// value, the two inputs have different line counts and pairwise alignment
+// breaks — fall back to writing the obfuscated text with a stderr note so
+// the user still gets the result.
+func printDiff(w io.Writer, original, obfuscated string) error {
+	o := strings.Split(original, "\n")
+	n := strings.Split(obfuscated, "\n")
+	if len(o) != len(n) {
+		fmt.Fprintf(os.Stderr, "warning: line count changed (%d → %d), per-line diff not possible — printing obfuscated text instead\n", len(o), len(n))
+		_, err := w.Write([]byte(obfuscated))
+		return err
+	}
+	var minus, plus, reset string
+	if colorEnabled(w) {
+		minus, plus, reset = "\x1b[31m", "\x1b[32m", "\x1b[0m"
+	}
+	changed := false
+	for i := range o {
+		if o[i] == n[i] {
+			continue
+		}
+		changed = true
+		if _, err := fmt.Fprintf(w, "%s- %s%s\n%s+ %s%s\n", minus, o[i], reset, plus, n[i], reset); err != nil {
+			return err
+		}
+	}
+	if !changed {
+		_, err := fmt.Fprintln(w, "(no changes)")
+		return err
+	}
+	return nil
+}
+
+// colorEnabled defaults to on; we only suppress ANSI when it would
+// definitely be noise: the user set NO_COLOR (https://no-color.org/)
+// or piped output to a file via -o (any *os.File that isn't os.Stdout).
+// Shell redirects (> file) keep stdout as os.Stdout and stay colored —
+// caller can opt out with NO_COLOR if that bites.
+func colorEnabled(w io.Writer) bool {
+	if os.Getenv("NO_COLOR") != "" {
+		return false
+	}
+	if f, ok := w.(*os.File); ok && f != os.Stdout {
+		return false
+	}
+	return true
 }
 
 func printMatches(w io.Writer, matches []detector.Match) error {
