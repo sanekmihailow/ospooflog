@@ -339,6 +339,104 @@ func TestDryRun_PrintsMatchesAndDoesNotMutate(t *testing.T) {
 	}
 }
 
+func TestDiff_PrintsChangedLinesAndDoesNotMutate(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	diffFile := filepath.Join(dir, "diff.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	// Two changed lines (first mask USER, second mask IP) bracketing an
+	// untouched line that must NOT appear in the diff output.
+	rawLog := "user=alice login\nunchanged middle line with no secrets\nconnect 10.1.2.3 ok\n"
+	if err := os.WriteFile(logFile, []byte(rawLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", diffFile, "-s", sessionFile, "--diff", "obfuscate"}); err != nil {
+		t.Fatalf("diff run failed: %v", err)
+	}
+
+	got, err := os.ReadFile(diffFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotStr := string(got)
+
+	for _, want := range []string{"- user=alice login", "+ user=user1 login", "- connect 10.1.2.3 ok", "+ connect 192.168.0.1 ok"} {
+		if !strings.Contains(gotStr, want) {
+			t.Errorf("diff output missing %q:\n%s", want, gotStr)
+		}
+	}
+	if strings.Contains(gotStr, "unchanged middle line") {
+		t.Errorf("diff output should skip unchanged lines:\n%s", gotStr)
+	}
+
+	if _, err := os.Stat(sessionFile); !os.IsNotExist(err) {
+		t.Errorf("--diff created a session file (err=%v)", err)
+	}
+}
+
+func TestDiff_ConflictsWithDryRun(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	if err := os.WriteFile(logFile, []byte("user=alice"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"-i", logFile, "-o", filepath.Join(dir, "out"), "-s", filepath.Join(dir, "s.json"), "--diff", "--dry-run", "obfuscate"})
+	if err == nil {
+		t.Fatal("expected error when --diff and --dry-run are combined")
+	}
+	if !strings.Contains(err.Error(), "mutually exclusive") {
+		t.Errorf("error should mention mutual exclusion, got: %v", err)
+	}
+}
+
+func TestDiff_NoChangesMarker(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	diffFile := filepath.Join(dir, "diff.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	if err := os.WriteFile(logFile, []byte("nothing sensitive here at all\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", diffFile, "-s", sessionFile, "--diff", "obfuscate"}); err != nil {
+		t.Fatalf("diff run failed: %v", err)
+	}
+	got, err := os.ReadFile(diffFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(got), "(no changes)") {
+		t.Errorf("expected '(no changes)' marker, got:\n%s", got)
+	}
+}
+
+func TestDiff_JSONMode(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.json")
+	diffFile := filepath.Join(dir, "diff.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	rawLog := `{"user":"alice","ip":"10.1.2.3"}` + "\n"
+	if err := os.WriteFile(logFile, []byte(rawLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", diffFile, "-s", sessionFile, "--json", "--diff", "obfuscate"}); err != nil {
+		t.Fatalf("diff run failed: %v", err)
+	}
+	got, err := os.ReadFile(diffFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotStr := string(got)
+	if !strings.Contains(gotStr, `- {"user":"alice","ip":"10.1.2.3"}`) {
+		t.Errorf("missing original line in diff:\n%s", gotStr)
+	}
+	if !strings.Contains(gotStr, `"user":"user1"`) || !strings.Contains(gotStr, `"ip":"192.168.0.1"`) {
+		t.Errorf("missing obfuscated values in diff:\n%s", gotStr)
+	}
+}
+
 func TestOverrides_CustomReplaceWins(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "log.txt")
