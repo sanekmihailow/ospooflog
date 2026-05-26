@@ -47,8 +47,21 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 		ports := []string{"8080", "8081", "9090", "9091", "3000", "4000"}
 		return ":" + ports[(n-1)%len(ports)]
 	},
-	detector.KindPath: func(n int, _ map[string]string) string {
-		return fmt.Sprintf("/var/lib/myapp%d/data", n)
+	detector.KindPath: func(n int, extra map[string]string) string {
+		// origin is injected by mapper.Obfuscate so PATH replacement can
+		// preserve the original first 4 segments (FHS-level structure
+		// like /var/lib/postgresql/data) and only fake the deeper tail
+		// where instance-specific data sits. Shallow paths never reach
+		// this code path — isProtectedValue drops them upstream.
+		origin := extra["_origin"]
+		if origin == "" {
+			return fmt.Sprintf("/var/lib/myapp%d/data", n)
+		}
+		parts := strings.SplitN(origin, "/", 6)
+		if len(parts) < 6 {
+			return origin
+		}
+		return strings.Join(parts[:5], "/") + fmt.Sprintf("/path%d", n)
 	},
 	detector.KindUUID: func(n int, _ map[string]string) string {
 		return fmt.Sprintf("00000000-0000-0000-0000-%012d", n)
