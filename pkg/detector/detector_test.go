@@ -202,14 +202,17 @@ func TestPath_Conservative(t *testing.T) {
 }
 
 func TestPath_ExtendedSystemRoots(t *testing.T) {
+	// /bin/bash and /sbin/auditctl trip the PATH rule but get dropped by
+	// the value-level system-binary protection — covered separately in
+	// TestProtectedBinDirs_NotMasked. Here we just verify the other
+	// rooted prefixes (/lib, /boot, /run) still detect, and that paths
+	// outside known roots don't leak.
 	text := "exe=/sbin/auditctl ld /lib/x86_64-linux-gnu/libcrypto boot /boot/vmlinuz-6.8 sock /run/systemd/private bin /bin/bash but skip /custom/whatever"
 	matches := New(DefaultRules()).Find(text)
 	want := map[string]bool{
-		"/sbin/auditctl":                  false,
 		"/lib/x86_64-linux-gnu/libcrypto": false,
 		"/boot/vmlinuz-6.8":               false,
 		"/run/systemd/private":            false,
-		"/bin/bash":                       false,
 	}
 	for _, m := range matches {
 		if m.Kind == KindPath {
@@ -336,6 +339,57 @@ func TestProtectedValues_LeftAlone(t *testing.T) {
 		for _, m := range matches {
 			if strings.EqualFold(m.Value, tc.preserve) {
 				t.Errorf("text=%q: protected value %q was captured by rule (kind=%s)", tc.text, tc.preserve, m.Kind)
+			}
+		}
+	}
+}
+
+func TestProtectedBinDirs_NotMasked(t *testing.T) {
+	// OS-shipped binaries under /bin, /usr/bin, /sbin, /usr/sbin,
+	// /usr/local/bin, /usr/local/sbin aren't PII — should pass through
+	// untouched even though the PATH rule technically matches them.
+	cases := []string{
+		"exec /bin/sh -c ls",
+		"COMMAND=/bin/bash -i",
+		"shell=/bin/zsh login",
+		"calling /usr/bin/python3.12 -m pip",
+		"run /usr/bin/perl5.32 -V",
+		"init at /sbin/init pid=1",
+		"helper /usr/sbin/sshd -D",
+		"hook /usr/local/bin/kubectl get pods",
+		"tool /usr/local/sbin/myapp-admin start",
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc)
+		for _, m := range matches {
+			if m.Kind == KindPath && strings.HasPrefix(m.Value, "/") {
+				t.Errorf("text=%q: system binary %q was captured (kind=%s)", tc, m.Value, m.Kind)
+			}
+		}
+	}
+}
+
+func TestProtectedInterpreters_NotMasked(t *testing.T) {
+	// Bare shell / interpreter names that surface in audit logs as
+	// "shell=bash" / "exec=perl" — captured by USER / HOST / PATH rules
+	// but trivially not PII. Lookup is case-insensitive and tolerates
+	// trailing version suffix (python3.12 → "python").
+	cases := []string{
+		"shell=bash login ok",
+		"shell=dash compat",
+		"exec=perl script.pl",
+		"running python3.12 main.py",
+		"interp=ruby2.7 deploy",
+		"shell=ZSH user1",
+	}
+	for _, tc := range cases {
+		matches := New(BalancedRules()).Find(tc)
+		for _, m := range matches {
+			low := strings.ToLower(m.Value)
+			for _, name := range []string{"bash", "dash", "perl", "python3.12", "ruby2.7", "zsh"} {
+				if low == name {
+					t.Errorf("text=%q: interpreter %q was captured (kind=%s)", tc, m.Value, m.Kind)
+				}
 			}
 		}
 	}
