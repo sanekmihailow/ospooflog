@@ -58,7 +58,16 @@ func (m *Mapper) Obfuscate(origin string, kind detector.EntityKind, extra map[st
 	if r, ok := m.overrides[origin]; ok && r != "" {
 		replace = r
 	} else {
-		replace = m.replacer.Generate(kind, n, extra)
+		// Side-channel origin into the replacer's extra map under a
+		// reserved key so kind-specific builders (currently PATH) can
+		// look at the original value. Copy to avoid mutating the
+		// Match.Extra map stored on the Entry.
+		genExtra := make(map[string]string, len(extra)+1)
+		for k, v := range extra {
+			genExtra[k] = v
+		}
+		genExtra["_origin"] = origin
+		replace = m.replacer.Generate(kind, n, genExtra)
 	}
 	e := &Entry{
 		Token:   token,
