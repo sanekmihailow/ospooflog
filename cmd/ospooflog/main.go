@@ -37,6 +37,7 @@ type opts struct {
 	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
 	Diff          bool   `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
 	Overrides     string `long:"overrides" description:"YAML file with fixed origin → replace pairs that win over the built-in templates; plain-text mode only (NUL placeholders collide with JSON)"`
+	Ignore        string `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
 	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
 	Dbg           bool   `long:"dbg" description:"debug logging on stderr (session load count, match dumps in dry-run)"`
@@ -131,6 +132,13 @@ func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
 		return err
 	}
 	chain := detector.New(rules)
+	if o.Ignore != "" {
+		il, err := detector.LoadIgnoreList(o.Ignore)
+		if err != nil {
+			return fmt.Errorf("ignore: %w", err)
+		}
+		chain.SetIgnore(il)
+	}
 
 	text, err := readInput(o.Input)
 	if err != nil {

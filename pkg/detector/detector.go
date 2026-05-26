@@ -119,7 +119,8 @@ type Chain struct {
 	// inner is the rules slice with DecodeBase64 rules stripped. Used to
 	// scan decoded base64 payloads without recursing back through them.
 	// Built eagerly in New so Find is safe for concurrent use.
-	inner *Chain
+	inner  *Chain
+	ignore *IgnoreList
 }
 
 func New(rules []Rule) *Chain {
@@ -137,6 +138,19 @@ func New(rules []Rule) *Chain {
 		c.inner = &Chain{rules: pass}
 	}
 	return c
+}
+
+// SetIgnore installs a user-supplied allowlist. A captured Match
+// whose value hits the list is dropped without claiming any byte
+// range, matching the behaviour of the static protectedValues
+// filter. Pass nil to clear. The inner chain (used for decoded
+// base64 payloads) gets the same list so an ignored value inside
+// an encoded blob doesn't trigger the outer DecodeBase64 rule.
+func (c *Chain) SetIgnore(l *IgnoreList) {
+	c.ignore = l
+	if c.inner != nil {
+		c.inner.ignore = l
+	}
 }
 
 type interval struct{ start, end int }
@@ -182,6 +196,9 @@ func (c *Chain) Find(text string) []Match {
 				continue
 			}
 			if isProtectedValue(value) {
+				continue
+			}
+			if c.ignore.Match(value) {
 				continue
 			}
 
