@@ -492,6 +492,59 @@ func TestOverrides_CustomReplaceWins(t *testing.T) {
 	}
 }
 
+func TestIgnore_LiteralAndRegexBothApplied(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+	ignoreFile := filepath.Join(dir, "ignore.txt")
+
+	if err := os.WriteFile(ignoreFile, []byte(`# leave alice and the test- hosts alone
+alice
+re:^192\.168\.99\.\d+$
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rawLog := "user=alice from 192.168.99.42 and user=bob from 10.4.5.6"
+	if err := os.WriteFile(logFile, []byte(rawLog), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--ignore", ignoreFile, "obfuscate"}); err != nil {
+		t.Fatalf("obfuscate failed: %v", err)
+	}
+	got, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotStr := string(got)
+
+	for _, preserved := range []string{"alice", "192.168.99.42"} {
+		if !strings.Contains(gotStr, preserved) {
+			t.Errorf("ignored value %q should remain in output:\n%s", preserved, gotStr)
+		}
+	}
+	for _, leaked := range []string{"bob", "10.4.5.6"} {
+		if strings.Contains(gotStr, leaked) {
+			t.Errorf("non-ignored value %q should have been masked:\n%s", leaked, gotStr)
+		}
+	}
+}
+
+func TestIgnore_BadFileErrors(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	if err := os.WriteFile(logFile, []byte("user=alice"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"-i", logFile, "-o", filepath.Join(dir, "out"), "-s", filepath.Join(dir, "s.json"), "--ignore", "/nonexistent/path/ignore.txt", "obfuscate"})
+	if err == nil {
+		t.Fatal("expected error for missing ignore file")
+	}
+	if !strings.Contains(err.Error(), "ignore") {
+		t.Errorf("error should mention 'ignore', got: %v", err)
+	}
+}
+
 func TestJSON_NDJSONRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "log.json")
