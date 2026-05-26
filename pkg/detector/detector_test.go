@@ -113,9 +113,11 @@ func TestBalancedMode_EnablesUserAndPathAndPortButNotHostOrB64(t *testing.T) {
 	if k := findKinds(balanced.Find("running as alice")); k[KindUser] == 0 {
 		t.Errorf("balanced should fire USER on 'as alice'")
 	}
-	// PATH /abs/path — balanced enables.
-	if k := findKinds(balanced.Find("open /custom/data/file.txt")); k[KindPath] == 0 {
-		t.Errorf("balanced should fire PATH on '/custom/data/file.txt'")
+	// PATH /abs/path — balanced enables. Path must be deeper than 4
+	// slashes; shallow paths fall under the universal shallow-path
+	// protection and never reach a PATH match.
+	if k := findKinds(balanced.Find("open /custom/data/subdir/nested/file.txt")); k[KindPath] == 0 {
+		t.Errorf("balanced should fire PATH on '/custom/data/subdir/nested/file.txt'")
 	}
 	// PORT — balanced enables.
 	if k := findKinds(balanced.Find("listen :5432 ready")); k[KindPort] == 0 {
@@ -188,7 +190,10 @@ func TestFQDN_RejectsPureDigits(t *testing.T) {
 }
 
 func TestPath_Conservative(t *testing.T) {
-	text := "open /var/log/app.log but skip /custom/path/here"
+	// Conservative mode under an FHS root, deep enough to escape the
+	// shallow-path protection. /custom/* is outside the conservative
+	// allowlist so it should still not fire.
+	text := "open /var/log/myapp/legacy/v1/app.log but skip /custom/path/here/deep/nested"
 	matches := New(DefaultRules()).Find(text)
 	paths := []string{}
 	for _, m := range matches {
@@ -196,29 +201,28 @@ func TestPath_Conservative(t *testing.T) {
 			paths = append(paths, m.Value)
 		}
 	}
-	if len(paths) != 1 || paths[0] != "/var/log/app.log" {
-		t.Errorf("conservative path want [/var/log/app.log], got %v", paths)
+	if len(paths) != 1 || paths[0] != "/var/log/myapp/legacy/v1/app.log" {
+		t.Errorf("conservative path want [/var/log/myapp/legacy/v1/app.log], got %v", paths)
 	}
 }
 
 func TestPath_ExtendedSystemRoots(t *testing.T) {
-	// /bin/bash and /sbin/auditctl trip the PATH rule but get dropped by
-	// the value-level system-binary protection — covered separately in
-	// TestProtectedBinDirs_NotMasked. Here we just verify the other
-	// rooted prefixes (/lib, /boot, /run) still detect, and that paths
-	// outside known roots don't leak.
-	text := "exe=/sbin/auditctl ld /lib/x86_64-linux-gnu/libcrypto boot /boot/vmlinuz-6.8 sock /run/systemd/private bin /bin/bash but skip /custom/whatever"
+	// FHS roots /lib, /boot, /run only trigger PATH capture when the
+	// path is deep enough to escape the shallow-path protection (>4
+	// slashes). At that point conservative mode still respects the FHS
+	// root allowlist — anything under /custom stays unmatched.
+	text := "ld /lib/x86_64-linux-gnu/extra/sub/libcrypto.so boot /boot/grub/themes/dark/v1/preset sock /run/systemd/units/runtime/v1/file but skip /custom/deeply/nested/file/inside"
 	matches := New(DefaultRules()).Find(text)
 	want := map[string]bool{
-		"/lib/x86_64-linux-gnu/libcrypto": false,
-		"/boot/vmlinuz-6.8":               false,
-		"/run/systemd/private":            false,
+		"/lib/x86_64-linux-gnu/extra/sub/libcrypto.so": false,
+		"/boot/grub/themes/dark/v1/preset":             false,
+		"/run/systemd/units/runtime/v1/file":           false,
 	}
 	for _, m := range matches {
 		if m.Kind == KindPath {
 			if _, ok := want[m.Value]; ok {
 				want[m.Value] = true
-			} else if m.Value == "/custom/whatever" {
+			} else if strings.HasPrefix(m.Value, "/custom/") {
 				t.Errorf("conservative path leaked outside known roots: %q", m.Value)
 			}
 		}
@@ -285,7 +289,10 @@ func TestSecretAssign_GenericNames(t *testing.T) {
 }
 
 func TestPath_Aggressive(t *testing.T) {
-	text := "open /custom/path/here"
+	// Aggressive mode picks up paths under arbitrary roots — still
+	// constrained by the shallow-path protection, so the test path
+	// needs >4 slashes to trigger a match.
+	text := "open /custom/path/here/deep/file"
 	matches := New(AggressiveRules()).Find(text)
 	paths := []string{}
 	for _, m := range matches {
@@ -293,8 +300,8 @@ func TestPath_Aggressive(t *testing.T) {
 			paths = append(paths, m.Value)
 		}
 	}
-	if len(paths) != 1 || paths[0] != "/custom/path/here" {
-		t.Errorf("aggressive path want [/custom/path/here], got %v", paths)
+	if len(paths) != 1 || paths[0] != "/custom/path/here/deep/file" {
+		t.Errorf("aggressive path want [/custom/path/here/deep/file], got %v", paths)
 	}
 }
 
@@ -340,6 +347,71 @@ func TestProtectedValues_LeftAlone(t *testing.T) {
 			if strings.EqualFold(m.Value, tc.preserve) {
 				t.Errorf("text=%q: protected value %q was captured by rule (kind=%s)", tc.text, tc.preserve, m.Kind)
 			}
+		}
+	}
+}
+
+func TestPath_ShallowProtected(t *testing.T) {
+	// Paths with ≤4 slashes are FHS-level structure, not PII — they
+	// must not produce a PATH match at all.
+	cases := []string{
+		"open /etc/foo file",
+		"config in /var/lib/postgresql/data started",
+		"rules at /etc/polkit-1/rules.d loaded",
+		"share dir /usr/share/polkit-1/rules.d ready",
+		"home /opt/app/conf check",
+	}
+	for _, tc := range cases {
+		matches := New(BalancedRules()).Find(tc)
+		for _, m := range matches {
+			if m.Kind == KindPath {
+				t.Errorf("text=%q: shallow path %q must not produce a PATH match", tc, m.Value)
+			}
+		}
+	}
+}
+
+func TestPath_DeepCapturedForPartialMasking(t *testing.T) {
+	// Paths with >4 slashes still match PATH so the replacer can
+	// preserve the first 4 segments and fake only the deeper tail.
+	// (The masking itself is exercised through the full obfuscate
+	// round-trip in cmd/ospooflog; here we just verify capture.)
+	text := "data /var/lib/postgresql/data/14/main loaded"
+	matches := New(DefaultRules()).Find(text)
+	var got string
+	for _, m := range matches {
+		if m.Kind == KindPath {
+			got = m.Value
+		}
+	}
+	if got != "/var/lib/postgresql/data/14/main" {
+		t.Errorf("deep path want '/var/lib/postgresql/data/14/main', got %q", got)
+	}
+}
+
+func TestUser_InsideHomePath(t *testing.T) {
+	// USER-in-home-path rule fires regardless of mode (it sits in
+	// coreRules) and captures only the username portion — surrounding
+	// /home/, /Users/, /var/spool/mail/ stays intact.
+	cases := []struct {
+		text string
+		want string
+	}{
+		{"checking /home/alice/.ssh/authorized_keys", "alice"},
+		{"path /Users/bob/Library/Logs/app.log", "bob"},
+		{"mail at /var/spool/mail/carol full", "carol"},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var got string
+		for _, m := range matches {
+			if m.Kind == KindUser {
+				got = m.Value
+				break
+			}
+		}
+		if got != tc.want {
+			t.Errorf("text=%q: want user %q, got %q", tc.text, tc.want, got)
 		}
 	}
 }
