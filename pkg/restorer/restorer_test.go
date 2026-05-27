@@ -75,6 +75,34 @@ func TestRestore_StrictWithPunctuationBoundary(t *testing.T) {
 	}
 }
 
+func TestRestore_StrictUnicodeWordBoundary(t *testing.T) {
+	// Neighbour bytes that belong to a multi-byte UTF-8 letter (cyrillic, CJK)
+	// must be decoded as a rune — checking a single continuation byte sees
+	// it as non-word and lets the splice through.
+	m := newMapper()
+	m.Obfuscate("bob", detector.KindUser, nil) // -> user1
+	r := New(m, true)
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"cyrillic left glue", "пользовательuser1 logged in", "пользовательuser1 logged in"},
+		{"cyrillic right glue", "logged user1зашёл system", "logged user1зашёл system"},
+		{"cjk right glue", "see user1日本語 there", "see user1日本語 there"},
+		{"space-separated still restores", "user user1 here", "user bob here"},
+		{"cyrillic with space still restores", "пользователь user1 зашёл", "пользователь bob зашёл"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := r.Restore(tc.in); got != tc.want {
+				t.Errorf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestRestore_NothingToRestore(t *testing.T) {
 	m := newMapper()
 	r := New(m, false)
