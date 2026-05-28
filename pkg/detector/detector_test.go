@@ -754,6 +754,51 @@ func TestJWT_ExtraExtractsClaims(t *testing.T) {
 	}
 }
 
+func TestJWT_UPNFallbackForEmail(t *testing.T) {
+	// Microsoft Azure AD / Office 365 tokens carry the user's email in
+	// "upn" rather than "email" — accept both so the same person gets
+	// one fake regardless of which IdP issued the token.
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(
+		`{"upn":"bob@contoso.onmicrosoft.com","sub":"opaque-id-99"}`))
+	sig := "dummysignature123"
+	jwt := header + "." + payload + "." + sig
+
+	matches := New(DefaultRules()).Find(jwt)
+	var jwtMatch *Match
+	for i := range matches {
+		if matches[i].Kind == KindToken {
+			jwtMatch = &matches[i]
+			break
+		}
+	}
+	if jwtMatch == nil {
+		t.Fatal("no JWT match found")
+	}
+	if got := jwtMatch.Extra["claim:"+string(KindEmail)]; got != "bob@contoso.onmicrosoft.com" {
+		t.Errorf("upn not routed to KindEmail: got %q", got)
+	}
+}
+
+func TestJWT_UPNWithoutAtNotRoutedAsEmail(t *testing.T) {
+	// Legacy AD-style UPN values without a realm aren't email-shaped —
+	// must not be registered as KindEmail (would otherwise produce a
+	// nonsense fake like "user1@example.com" from "bob").
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"upn":"bob","sub":"opaque-id-99"}`))
+	sig := "dummysignature123"
+	jwt := header + "." + payload + "." + sig
+
+	matches := New(DefaultRules()).Find(jwt)
+	for _, m := range matches {
+		if m.Kind == KindToken {
+			if got, ok := m.Extra["claim:"+string(KindEmail)]; ok {
+				t.Errorf("non-email upn %q leaked into claim:EMAIL", got)
+			}
+		}
+	}
+}
+
 func TestIP6_RejectsTimestamps(t *testing.T) {
 	text := "2026-05-03 19:00:01 INFO ok at fe80::1 done"
 	matches := New(DefaultRules()).Find(text)
