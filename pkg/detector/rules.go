@@ -34,6 +34,166 @@ var protectedValues = map[string]bool{
 	"mysql":     true,
 	"root":      true,
 	"system":    true,
+	// Web / reverse proxy / load balancer software — process names that
+	// show up as USER captures in syslog ("nginx: worker process"), as
+	// k8s container names, or as systemd unit names. These are software,
+	// not people.
+	"nginx":   true,
+	"apache":  true,
+	"httpd":   true,
+	"caddy":   true,
+	"envoy":   true,
+	"haproxy": true,
+	"traefik": true,
+	// Databases / cache / queue — process names with the same treatment
+	// as mysql (which has been on this list since v0.3.1).
+	"postgres":      true,
+	"postgresql":    true,
+	"mariadb":       true,
+	"redis":         true,
+	"mongo":         true,
+	"mongodb":       true,
+	"memcached":     true,
+	"memcache":      true,
+	"elasticsearch": true,
+	"kafka":         true,
+	"rabbitmq":      true,
+	// Standard system accounts straight from /etc/passwd on a stock
+	// Debian/RHEL box. Not humans, not PII.
+	"nobody":     true,
+	"daemon":     true,
+	"www-data":   true,
+	"sshd":       true,
+	"messagebus": true,
+	"dbus":       true,
+	"polkitd":    true,
+	"_apt":       true,
+	"tcpdump":    true,
+	"chrony":     true,
+	"tss":        true,
+	// Core init / system services — process names in syslog, journald.
+	"systemd":        true,
+	"init":           true,
+	"kernel":         true,
+	"cron":           true,
+	"crond":          true,
+	"rsyslog":        true,
+	"journald":       true,
+	"auditd":         true,
+	"cloud-init":     true,
+	"networkmanager": true,
+	// Container runtime / orchestration component names.
+	"containerd":     true,
+	"runc":           true,
+	"kubelet":        true,
+	"dockerd":        true,
+	"docker":         true,
+	"podman":         true,
+	"lxc":            true,
+	"lxd":            true,
+	"kube-proxy":     true,
+	"kube-apiserver": true,
+	"kubeadm":        true,
+	// K8s addons / control plane store / CNI plugins.
+	"etcd":     true,
+	"flannel":  true,
+	"calico":   true,
+	"cilium":   true,
+	"metallb":  true,
+	// Service mesh / discovery.
+	"istio":   true,
+	"linkerd": true,
+	"consul":  true,
+	// Package managers / installers.
+	"apt":     true,
+	"apt-get": true,
+	"dpkg":    true,
+	"yum":     true,
+	"dnf":     true,
+	"apk":     true,
+	"pacman":  true,
+	"zypper":  true,
+	"rpm":     true,
+	"snap":    true,
+	"snapd":   true,
+	// DNS / LDAP / DHCP daemons.
+	"bind":     true,
+	"named":    true,
+	"slapd":    true,
+	"dhcpd":    true,
+	"dhclient": true,
+	// Storage / partitioning / smart utilities.
+	"mdadm":      true,
+	"lvm":        true,
+	"cryptsetup": true,
+	"blkid":      true,
+	"lsblk":      true,
+	"smartd":     true,
+	// PAM modules — appear as syslog tags ("pam_unix(sshd:session)").
+	"pam_unix":    true,
+	"pam_systemd": true,
+	"pam_winbind": true,
+	"pam_krb5":    true,
+	"pam_sss":     true,
+	// Mandatory-access-control frameworks.
+	"selinux":  true,
+	"apparmor": true,
+	"tomoyo":   true,
+	"smack":    true,
+	// Mail daemons + spam/sig filters that ride syslog with the same
+	// daemon-tag shape as postfix.
+	"postfix":       true,
+	"dovecot":       true,
+	"exim":          true,
+	"sendmail":      true,
+	"opendkim":      true,
+	"spamassassin":  true,
+	"amavis":        true,
+	// Time sync daemons.
+	"ntpd":       true,
+	"chronyd":    true,
+	"timesyncd":  true,
+	// VPN / IPsec.
+	"wireguard":  true,
+	"openvpn":    true,
+	"strongswan": true,
+	"racoon":     true,
+	// Backup tools — appear as cronjob log tags.
+	"restic":     true,
+	"borg":       true,
+	"borgbackup": true,
+	"rsnapshot":  true,
+	// sudo / audit log field names. reUserConservative matches the
+	// "user:" separator in "sudo: user : TTY=pts/0 ; PWD=...; USER=root"
+	// and captures the field name as a USER value. These names are
+	// never real usernames in practice — protect them so the false
+	// match drops at the value filter.
+	"tty":     true,
+	"pwd":     true,
+	"cmd":     true,
+	"command": true,
+	"pts":     true,
+	// Generic infrastructure roles — env labels, replication roles,
+	// service-type names. These can in principle collide with real
+	// hostnames/usernames (e.g. a literal system user "app"), but in
+	// practice the role/label meaning dominates in the kinds of logs we
+	// process — kept on the allowlist by explicit user decision.
+	"web":        true,
+	"api":        true,
+	"app":        true,
+	"worker":     true,
+	"cache":      true,
+	"queue":      true,
+	"prod":       true,
+	"production": true,
+	"staging":    true,
+	"dev":        true,
+	"qa":         true,
+	"master":     true,
+	"slave":      true,
+	"primary":    true,
+	"replica":    true,
+	"standby":    true,
 	// Public software / OS vendor domains — masking these loses meaning
 	// for the AI (an "image is on serviceN.example.com" is useless;
 	// "image is on docker.io" is real context).
@@ -52,9 +212,9 @@ var protectedValues = map[string]bool{
 	"cattle.io":         true,
 	"traefik.io":        true,
 	// Code-hosting platforms.
-	"github.com":        true,
-	"gitlab.com":        true,
-	"bitbucket.org":     true,
+	"github.com":    true,
+	"gitlab.com":    true,
+	"bitbucket.org": true,
 	// Container registries — same reasoning.
 	"gcr.io":            true,
 	"ghcr.io":           true,
@@ -104,6 +264,22 @@ var protectedBinDirs = []string{
 	"/usr/local/sbin/",
 }
 
+// protectedFSPrefixes are pseudo-filesystem / runtime-state mountpoints
+// whose contents are kernel-exposed or session-state (/sys/class/net/eth0,
+// /proc/cpuinfo, /dev/sda1, /run/systemd/system/foo.service), not user
+// data. rePathConservative already excludes /proc, /sys, /dev, but
+// rePathAggressive (--mode balanced / aggressive) matches any 2+ segment
+// absolute path and reels them in. /run is in rePathConservative's FHS
+// allowlist but the contents (systemd unit drop-ins, pid files, locks)
+// are runtime state, not PII. Reject all four at the value-filter layer
+// for all rules / modes.
+var protectedFSPrefixes = []string{
+	"/proc/",
+	"/sys/",
+	"/dev/",
+	"/run/",
+}
+
 // protectedInterpreters are bare shell and interpreter names that
 // surface in audit logs as "shell=bash", "exec=perl", etc. — captured
 // by USER / PATH / HOST rules but obviously not PII. Lookup is
@@ -127,6 +303,14 @@ func isProtectedValue(s string) bool {
 	// shallow paths (/home/alice) still get masked independently.
 	if strings.HasPrefix(s, "/") && strings.Count(s, "/") <= 4 && !strings.ContainsAny(s, " \t\n") {
 		return true
+	}
+	// Pseudo-filesystem paths (/sys/class/net/eth0/operstate,
+	// /proc/cpuinfo, /dev/sda1) — kernel runtime state, never PII.
+	// Filesystem paths are case-sensitive on Linux, so check raw s.
+	for _, p := range protectedFSPrefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
 	}
 	// Path rooted under an OS-shipped bin dir (/bin/sh, /usr/bin/python).
 	// Catches DEEP paths under bin dirs too (/usr/bin/.../sub/dir/file)
@@ -604,8 +788,15 @@ var (
 // validTLDs is the IANA TLD set in lowercase form. Initialised once from
 // the embedded ianaTLDs string with a small blacklist of TLDs that collide
 // with common log-content tokens: ".so" (shared-library extension), ".zip"
-// and ".mov" (archive / video extensions), ".bar" (the "foo.bar" idiom).
-// Users can extend via --overrides if a specific TLD is noisy in their logs.
+// and ".mov" (archive / video extensions), ".bar" (the "foo.bar" idiom),
+// source-file extensions (".py", ".rb", ".go", ".sh"), DNS reverse
+// zones (".arpa"), Markdown/SSH-pubkey/PID/backup file extensions
+// (".md", ".pub", ".pid", ".new"), and pkg-manager/profiler/temp
+// suffixes (".save" for rpmsave/passwd.save, ".prof" for Go pprof
+// dumps, ".work" for tmpdirs) — all shadow registered gTLDs but
+// dominantly appear as file paths in logs (README.md, id_rsa.pub,
+// nginx.pid, /etc/passwd.new, cpu.prof). Users can extend via
+// --overrides if a specific TLD is noisy in their logs.
 var validTLDs = func() map[string]bool {
 	m := make(map[string]bool, 1500)
 	for _, t := range strings.Split(ianaTLDs, "\n") {
@@ -614,7 +805,7 @@ var validTLDs = func() map[string]bool {
 			m[t] = true
 		}
 	}
-	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh", "arpa"} {
+	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh", "arpa", "md", "pub", "pid", "new", "save", "prof", "work"} {
 		delete(m, t)
 	}
 	// systemd unit-type extensions look like TLDs (.target was applied for
@@ -686,6 +877,32 @@ var userStopWords = map[string]bool{
 	"the": true, "a": true, "an": true, "this": true, "that": true,
 	"running": true, "started": true, "stopped": true, "failed": true,
 	"done": true, "complete": true, "all": true, "any": true, "some": true,
+	// sshd auth-failure phrasing: "Failed password for invalid user X"
+	"invalid": true, "unknown": true,
+	// systemd / cloud-init / k3s phrasing: "Waiting for processes to
+	// exit", "running as service", "for volume <name>", "as DNS".
+	"processes": true, "service": true, "device": true, "network": true,
+	"domain": true, "local": true, "remote": true, "caches": true,
+	"cleanup": true, "current": true, "direct": true, "configured": true,
+	"base": true, "boot": true, "autoregister": true,
+	"volume": true, "sandbox": true, "key": true, "item": true,
+	"pod": true, "packages": true, "virtual": true, "shutdown": true,
+	"zone": true, "untainted": true, "requests": true, "reply": true,
+	"new": true, "more": true, "interrupt": true, "initramfs": true,
+	"initial": true, "informer": true, "host": true, "endpoint": true,
+	"easy": true, "each": true, "config": true, "data": true,
+	"events": true, "final": true, "mirror": true, "renaming": true,
+	"url": true,
+	// Mixed-case / domain-prefix tokens the acronym filter below misses
+	// (acronym filter only drops all-uppercase 2-5 chars).
+	"ipv4": true, "ipv6": true, "e820": true, "cpus": true, "apport": true,
+	"atomic": true, "apiservice": true, "localavailability": true,
+	"remoteavailability": true,
+	// Compound k8s / systemd component names with hyphens / underscores —
+	// the regex tokenisation allows these, so they slip past simple
+	// English-word stop lists.
+	"cloud-controller-manager": true, "kube-system": true,
+	"systemd-networkd": true, "rcu_fanout_leaf": true, "rtc0": true,
 	// Tokens after "user:" that are field names, not usernames
 	"name": true, "id": true, "uid": true, "gid": true,
 	// OS / distro names that get caught by "for <name>"
@@ -717,7 +934,28 @@ func validPassword(s string) bool {
 }
 
 func validUser(s string) bool {
-	return !userStopWords[strings.ToLower(s)]
+	if userStopWords[strings.ToLower(s)] {
+		return false
+	}
+	// All-uppercase 2-5 char tokens are acronyms (DNS, DB, CPU, IRQ,
+	// PCI, SMP, GRUB) that "as|for" patterns lift out of init/kernel
+	// messages, never usernames in practice. Length floor 2 keeps
+	// the regex's own 2-char minimum aligned; ceiling 5 covers GRUB
+	// while still allowing real all-caps usernames like "ADMIN6".
+	if n := len(s); n >= 2 && n <= 5 && isAllUpperAlpha(s) {
+		return false
+	}
+	return true
+}
+
+func isAllUpperAlpha(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 'A' || c > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 // validCard accepts only digit strings that start with a known card-brand
@@ -827,7 +1065,20 @@ func validIPv6(s string) bool {
 	if ip.IsUnspecified() || ip.IsLoopback() {
 		return false
 	}
-	return true
+	// Ultra-short forms like "e::", "ca::", "1::1" are technically valid
+	// (e:0:0:0:0:0:0:0 etc) but in real log content they almost always
+	// come from "::" used as a separator in non-IP tokens:
+	// "client-ca-bundle::/var/lib/...", "kube-system::extension-...",
+	// C++ namespaces ("std::vector"). Require at least 4 hex digits so
+	// fe80::* and 2001::* pass while the false-positive shapes drop.
+	hexChars := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			hexChars++
+		}
+	}
+	return hexChars >= 4
 }
 
 func validAddr(s string) bool {
@@ -889,8 +1140,17 @@ func jwtExtra(sub []string) map[string]string {
 		return nil
 	}
 	extra := map[string]string{}
-	if v, ok := claims["email"].(string); ok && v != "" {
-		extra["claim:"+string(KindEmail)] = v
+	// Email comes from "email" or Microsoft's "upn" (User Principal
+	// Name, Azure AD / Office 365) — both are email-shaped principals
+	// and should map to the same fake so a user's email resolves
+	// consistently whether the JWT uses either field name. Filter to
+	// values containing '@' so legacy AD-style UPN values without a
+	// realm don't get mis-routed as KindEmail.
+	for _, key := range []string{"email", "upn"} {
+		if v, ok := claims[key].(string); ok && strings.Contains(v, "@") {
+			extra["claim:"+string(KindEmail)] = v
+			break
+		}
 	}
 	if v, ok := claims["phone_number"].(string); ok && v != "" {
 		extra["claim:"+string(KindPhone)] = v

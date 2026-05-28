@@ -207,29 +207,59 @@ func TestPath_Conservative(t *testing.T) {
 }
 
 func TestPath_ExtendedSystemRoots(t *testing.T) {
-	// FHS roots /lib, /boot, /run only trigger PATH capture when the
-	// path is deep enough to escape the shallow-path protection (>4
-	// slashes). At that point conservative mode still respects the FHS
-	// root allowlist — anything under /custom stays unmatched.
+	// FHS roots /lib, /boot trigger PATH capture when deep enough to
+	// escape the shallow-path protection (>4 slashes). /run is in the
+	// conservative regex's FHS allowlist but its contents are runtime
+	// state (systemd unit drop-ins, pid files, locks) — protectedFSPrefixes
+	// drops them. Anything under /custom stays unmatched.
 	text := "ld /lib/x86_64-linux-gnu/extra/sub/libcrypto.so boot /boot/grub/themes/dark/v1/preset sock /run/systemd/units/runtime/v1/file but skip /custom/deeply/nested/file/inside"
 	matches := New(DefaultRules()).Find(text)
 	want := map[string]bool{
 		"/lib/x86_64-linux-gnu/extra/sub/libcrypto.so": false,
 		"/boot/grub/themes/dark/v1/preset":             false,
-		"/run/systemd/units/runtime/v1/file":           false,
 	}
 	for _, m := range matches {
-		if m.Kind == KindPath {
-			if _, ok := want[m.Value]; ok {
-				want[m.Value] = true
-			} else if strings.HasPrefix(m.Value, "/custom/") {
-				t.Errorf("conservative path leaked outside known roots: %q", m.Value)
-			}
+		if m.Kind != KindPath {
+			continue
+		}
+		if _, ok := want[m.Value]; ok {
+			want[m.Value] = true
+		} else if strings.HasPrefix(m.Value, "/custom/") {
+			t.Errorf("conservative path leaked outside known roots: %q", m.Value)
+		} else if strings.HasPrefix(m.Value, "/run/") {
+			t.Errorf("pseudo-fs path under /run captured: %q", m.Value)
 		}
 	}
 	for k, v := range want {
 		if !v {
 			t.Errorf("path not detected: %q", k)
+		}
+	}
+}
+
+func TestPath_PseudoFSPrefixesDropped(t *testing.T) {
+	// /proc, /sys, /dev, /run are pseudo-fs / runtime-state — never PII.
+	// Verify across DefaultRules + BalancedRules (aggressive PATH rule
+	// is enabled in balanced and would otherwise scoop these up).
+	cases := []string{
+		"reading /proc/sys/kernel/random/uuid for entropy",
+		"check /sys/class/net/eth0/operstate up",
+		"open /dev/disk/by-uuid/abc/deep/path for mount",
+		"socket at /run/systemd/system/foo.service.d/override",
+		"pid in /run/sshd/pid done",
+	}
+	for _, mode := range []string{"safe", "balanced"} {
+		rules := DefaultRules()
+		if mode == "balanced" {
+			rules = BalancedRules()
+		}
+		for _, text := range cases {
+			matches := New(rules).Find(text)
+			for _, m := range matches {
+				if m.Kind == KindPath {
+					t.Errorf("mode=%s: pseudo-fs path captured: %q from %q", mode, m.Value, text)
+				}
+			}
 		}
 	}
 }
@@ -467,6 +497,150 @@ func TestProtectedInterpreters_NotMasked(t *testing.T) {
 	}
 }
 
+func TestProtectedValues_ExtendedCoverage(t *testing.T) {
+	// Bare names that should never be captured as USER (or any other
+	// kind) once they hit the protectedValues filter. Driven through the
+	// USER rule via a "user=<v>" prefix because USER in safe mode needs
+	// explicit context — the test is about the filter, not the capture
+	// surface.
+	values := []string{
+		// Web / proxy / lb software
+		"nginx", "apache", "httpd", "caddy", "envoy", "haproxy", "traefik",
+		// Databases / cache / queue
+		"postgres", "postgresql", "mariadb", "redis", "mongo", "mongodb",
+		"memcached", "memcache", "elasticsearch", "kafka", "rabbitmq",
+		// Standard system accounts
+		"nobody", "daemon", "www-data", "sshd", "messagebus", "dbus",
+		"polkitd", "_apt", "tcpdump", "chrony", "tss",
+		// Core init / system services
+		"systemd", "init", "kernel", "cron", "crond", "rsyslog",
+		"journald", "auditd", "cloud-init", "NetworkManager",
+		// Container runtime / orchestration
+		"containerd", "runc", "kubelet", "dockerd", "docker", "podman",
+		"lxc", "lxd", "kube-proxy", "kube-apiserver", "kubeadm",
+		// K8s addons / etcd / CNI
+		"etcd", "flannel", "calico", "cilium", "metallb",
+		// Service mesh
+		"istio", "linkerd", "consul",
+		// Package managers
+		"apt", "apt-get", "dpkg", "yum", "dnf", "apk", "pacman",
+		"zypper", "rpm", "snap", "snapd",
+		// DNS / LDAP / DHCP
+		"bind", "named", "slapd", "dhcpd", "dhclient",
+		// Storage / partitioning
+		"mdadm", "lvm", "cryptsetup", "blkid", "lsblk", "smartd",
+		// PAM modules
+		"pam_unix", "pam_systemd", "pam_winbind", "pam_krb5", "pam_sss",
+		// MAC frameworks
+		"selinux", "apparmor", "tomoyo", "smack",
+		// Mail daemons
+		"postfix", "dovecot", "exim", "sendmail", "opendkim",
+		"spamassassin", "amavis",
+		// Time sync
+		"ntpd", "chronyd", "timesyncd",
+		// VPN
+		"wireguard", "openvpn", "strongswan", "racoon",
+		// Backup
+		"restic", "borg", "borgbackup", "rsnapshot",
+		// sudo/audit log field names
+		"tty", "pwd", "cmd", "command", "pts",
+		// Generic infrastructure roles
+		"web", "api", "app", "worker", "cache", "queue",
+		"prod", "production", "staging", "dev", "qa",
+		"master", "slave", "primary", "replica", "standby",
+	}
+	for _, v := range values {
+		t.Run(v, func(t *testing.T) {
+			text := "user=" + v + " connected"
+			matches := New(BalancedRules()).Find(text)
+			for _, m := range matches {
+				if strings.EqualFold(m.Value, v) {
+					t.Errorf("protected value %q captured (kind=%s)", v, m.Kind)
+				}
+			}
+		})
+	}
+}
+
+func TestValidUser_BalancedStopWords(t *testing.T) {
+	// reUserAggressive runs in --mode balanced and matches "as|for <word>".
+	// On real syslog it picks up English words and acronyms that are
+	// never usernames. Catches must be dropped at the validUser layer.
+	noUserCases := []struct {
+		name string
+		text string
+		bad  string
+	}{
+		{"invalid in sshd auth", "Failed password for invalid user test from 1.2.3.4 port 22", "invalid"},
+		{"processes in systemd-logind", "Session 1 logged out. Waiting for processes to exit.", "processes"},
+		{"caches in syslog", "Memory cgroup out of memory: reducing caches for service apache.", "caches"},
+		{"service noun", "running as service unit", "service"},
+		{"network as noun", "blocking traffic for network outage", "network"},
+		{"local noun", "config saved for local namespace", "local"},
+		{"DNS acronym", "lookup as DNS resolver", "DNS"},
+		{"DB acronym", "querying for DB connection", "DB"},
+		{"CPU acronym", "scheduling as CPU governor", "CPU"},
+		{"IRQ acronym", "remapped for IRQ handler", "IRQ"},
+		{"GRUB acronym", "config for GRUB loader", "GRUB"},
+		{"IPv4 mixed", "tagged as IPv4 address", "IPv4"},
+		{"E820 prefix", "marked as E820 reserved", "E820"},
+	}
+	for _, tc := range noUserCases {
+		t.Run(tc.name, func(t *testing.T) {
+			matches := New(BalancedRules()).Find(tc.text)
+			for _, m := range matches {
+				if m.Kind == KindUser && strings.EqualFold(m.Value, tc.bad) {
+					t.Errorf("stop-word %q captured as USER from %q", tc.bad, tc.text)
+				}
+			}
+		})
+	}
+
+	// Negative test: real usernames in the same shape must still match.
+	yesCases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"sshd accepted", "Accepted publickey for alice from 1.2.3.4 port 22", "alice"},
+		{"sudo as user", "running as bob today", "bob"},
+		{"mixed-case username", "executed for sanekM in tty", "sanekM"},
+	}
+	for _, tc := range yesCases {
+		t.Run(tc.name, func(t *testing.T) {
+			matches := New(BalancedRules()).Find(tc.text)
+			var found bool
+			for _, m := range matches {
+				if m.Kind == KindUser && m.Value == tc.want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("real username %q not captured from %q", tc.want, tc.text)
+			}
+		})
+	}
+}
+
+func TestProtectedValues_SudoLogFieldNames(t *testing.T) {
+	// reUserConservative reads "<word>:<value>" as a user assignment,
+	// which catches the "user :" separator in a sudo line like
+	// "sudo: user : TTY=pts/0 ; PWD=/home/user ; USER=root ; COMMAND=...".
+	// The field name on the right ("TTY") used to be captured as a USER
+	// value. tty/pwd/cmd/command/pts are now in protectedValues so the
+	// false match drops at the value filter without disturbing the
+	// legitimate "user" username capture.
+	text := "sudo:     user : TTY=pts/0 ; PWD=/home/user/dotfiles ; USER=root ; COMMAND=/usr/bin/chown"
+	matches := New(DefaultRules()).Find(text)
+	for _, m := range matches {
+		switch strings.ToUpper(m.Value) {
+		case "TTY", "PWD", "CMD", "COMMAND", "PTS":
+			t.Errorf("sudo log field name %q captured (kind=%s)", m.Value, m.Kind)
+		}
+	}
+}
+
 func TestProtectedValues_DoNotShadowNeighbouringMatches(t *testing.T) {
 	// reMySQLUserAt's whole match spans 'vtiger_user'@'localhost'. The
 	// value-level protectedValues filter must not prevent vtiger_user
@@ -509,6 +683,34 @@ func TestFQDN_RejectsSourceFileExtensions(t *testing.T) {
 		"main.py loaded",
 		"app.rb is the entry point",
 		"build.sh exited 0",
+	}
+	for _, text := range cases {
+		matches := New(DefaultRules()).Find(text)
+		if c := findKinds(matches); c[KindFQDN] != 0 {
+			t.Errorf("text=%q: expected 0 FQDN matches, got %d (matches=%+v)", text, c[KindFQDN], matches)
+		}
+	}
+}
+
+func TestFQDN_RejectsFileExtensionTLDs(t *testing.T) {
+	// .md / .pub / .pid / .new / .save / .prof / .work are registered
+	// gTLDs that overwhelmingly appear as filename extensions in logs
+	// (README.md, id_rsa.pub, nginx.pid, /etc/passwd.new, passwd.save,
+	// cpu.prof), not as actual hostnames. Blacklisted so they don't
+	// get FQDN-masked.
+	cases := []string{
+		"reading README.md for setup",
+		"checking ~/.ssh/id_rsa.pub authorized",
+		"loaded id_ed25519.pub key",
+		"writing pid to /var/run/nginx.pid",
+		"sshd.pid removed",
+		"saved as /etc/passwd.new before swap",
+		"diff against config.new",
+		"rpmsave kept as /etc/passwd.save",
+		"backup at /etc/shadow.save written",
+		"profile dumped to cpu.prof in /tmp",
+		"go tool pprof heap.prof open",
+		"tmp build dir build.work cleaned",
 	}
 	for _, text := range cases {
 		matches := New(DefaultRules()).Find(text)
@@ -690,6 +892,102 @@ func TestJWT_ExtraExtractsClaims(t *testing.T) {
 	// sub is intentionally not registered as USER — too often an opaque IdP id.
 	if got, ok := jwtMatch.Extra["claim:"+string(KindUser)]; ok && got == "opaque-id-12345" {
 		t.Errorf("sub leaked into claim:USER: %q", got)
+	}
+}
+
+func TestJWT_UPNFallbackForEmail(t *testing.T) {
+	// Microsoft Azure AD / Office 365 tokens carry the user's email in
+	// "upn" rather than "email" — accept both so the same person gets
+	// one fake regardless of which IdP issued the token.
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(
+		`{"upn":"bob@contoso.onmicrosoft.com","sub":"opaque-id-99"}`))
+	sig := "dummysignature123"
+	jwt := header + "." + payload + "." + sig
+
+	matches := New(DefaultRules()).Find(jwt)
+	var jwtMatch *Match
+	for i := range matches {
+		if matches[i].Kind == KindToken {
+			jwtMatch = &matches[i]
+			break
+		}
+	}
+	if jwtMatch == nil {
+		t.Fatal("no JWT match found")
+	}
+	if got := jwtMatch.Extra["claim:"+string(KindEmail)]; got != "bob@contoso.onmicrosoft.com" {
+		t.Errorf("upn not routed to KindEmail: got %q", got)
+	}
+}
+
+func TestJWT_UPNWithoutAtNotRoutedAsEmail(t *testing.T) {
+	// Legacy AD-style UPN values without a realm aren't email-shaped —
+	// must not be registered as KindEmail (would otherwise produce a
+	// nonsense fake like "user1@example.com" from "bob").
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"upn":"bob","sub":"opaque-id-99"}`))
+	sig := "dummysignature123"
+	jwt := header + "." + payload + "." + sig
+
+	matches := New(DefaultRules()).Find(jwt)
+	for _, m := range matches {
+		if m.Kind == KindToken {
+			if got, ok := m.Extra["claim:"+string(KindEmail)]; ok {
+				t.Errorf("non-email upn %q leaked into claim:EMAIL", got)
+			}
+		}
+	}
+}
+
+func TestIP6_RejectsShortFormFromTextSeparator(t *testing.T) {
+	// "::" used as a separator in non-IPv6 tokens (k8s namespace paths,
+	// C++ namespaces, file path concatenations) generates ultra-short
+	// IPv6 forms like "e::", "ca::", "1::1" — all technically valid
+	// (e:0:0:0:0:0:0:0 etc) but never real addresses in operational
+	// logs. validIPv6's 4-hex-digit floor drops them while preserving
+	// legitimate fe80::* / 2001::* / fd00::* shapes.
+	cases := []struct {
+		text  string
+		bad   string
+		good  []string
+	}{
+		{
+			text: `name="client-ca-bundle::/var/lib/rancher/k3s/server/tls/client-ca.crt"`,
+			bad:  "e::",
+		},
+		{
+			text: `controller="client-ca::kube-system::extension-apiserver-authentication::client-ca-file"`,
+			bad:  "ca::",
+		},
+		{
+			text: `c++ namespace std::vector and 1::1 abbreviated`,
+			bad:  "1::1",
+		},
+		{
+			text: `valid link-local fe80::1 alongside 2001:db8::1`,
+			good: []string{"fe80::1", "2001:db8::1"},
+		},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		for _, m := range matches {
+			if m.Kind == KindIP6 && m.Value == tc.bad {
+				t.Errorf("short-form IPv6 %q captured from %q", tc.bad, tc.text)
+			}
+		}
+		for _, want := range tc.good {
+			var found bool
+			for _, m := range matches {
+				if m.Kind == KindIP6 && m.Value == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("real IPv6 %q not captured from %q", want, tc.text)
+			}
+		}
 	}
 }
 
