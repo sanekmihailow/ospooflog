@@ -16,6 +16,8 @@ package restorer
 import (
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/sanekmihailow/ospooflog/pkg/mapper"
 )
@@ -112,6 +114,16 @@ func isWordChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_'
 }
 
+// isWordRune is the Unicode-aware counterpart used for the *neighbours* of the
+// substring being checked. Fake tokens themselves are always ASCII so the
+// inside bytes are still byte-checked, but neighbours may be any UTF-8 rune
+// (cyrillic, CJK, …) and must be decoded as runes — checking a single
+// continuation byte falsely reports "not a word char" and lets the restore
+// splice through a non-ASCII word.
+func isWordRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_'
+}
+
 // isWordBoundary returns true if the substring [start:end] is not glued to
 // adjacent word characters on the side where it itself ends in a word
 // character. The asymmetric check is what lets ":8080" match cleanly even
@@ -123,11 +135,17 @@ func isWordBoundary(text string, start, end int) bool {
 	}
 	first := text[start]
 	last := text[end-1]
-	if start > 0 && isWordChar(first) && isWordChar(text[start-1]) {
-		return false
+	if start > 0 && isWordChar(first) {
+		prev, _ := utf8.DecodeLastRuneInString(text[:start])
+		if isWordRune(prev) {
+			return false
+		}
 	}
-	if end < len(text) && isWordChar(last) && isWordChar(text[end]) {
-		return false
+	if end < len(text) && isWordChar(last) {
+		next, _ := utf8.DecodeRuneInString(text[end:])
+		if isWordRune(next) {
+			return false
+		}
 	}
 	return true
 }

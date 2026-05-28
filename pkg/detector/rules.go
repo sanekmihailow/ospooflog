@@ -89,11 +89,63 @@ var protectedSlugSuffixes = []string{
 	"volumes-kubernetes.io",
 }
 
+// protectedBinDirs are the OS-shipped executable directories. A PATH
+// value rooted here is by definition a system binary (/bin/sh,
+// /usr/bin/python3.12, /sbin/init) — not PII. Trailing slash matters:
+// "/bin/" rules out a literal "/bin" match (probably a real directory
+// reference worth keeping in context) and prevents "/binary-of-mine"
+// from sneaking through.
+var protectedBinDirs = []string{
+	"/bin/",
+	"/usr/bin/",
+	"/sbin/",
+	"/usr/sbin/",
+	"/usr/local/bin/",
+	"/usr/local/sbin/",
+}
+
+// protectedInterpreters are bare shell and interpreter names that
+// surface in audit logs as "shell=bash", "exec=perl", etc. — captured
+// by USER / PATH / HOST rules but obviously not PII. Lookup is
+// case-insensitive and tolerates trailing version digits (python3.12
+// → "python", perl5.32 → "perl").
+var protectedInterpreters = map[string]bool{
+	"sh": true, "bash": true, "dash": true, "ash": true,
+	"zsh": true, "ksh": true, "csh": true, "tcsh": true, "fish": true,
+	"perl": true, "ruby": true, "python": true, "node": true,
+}
+
 // isProtectedValue checks the value against protectedValues for exact
 // match, then ".suffix" subdomain match, then bare-suffix slug match,
 // then (for email-shaped values) the domain part. Case-insensitive.
 func isProtectedValue(s string) bool {
+	// Shallow absolute paths (≤4 slashes, i.e. ≤4 segments) are kept
+	// verbatim — they're the FHS-level structure (/etc/foo, /var/lib/x/y)
+	// that carries context but not PII. Deeper paths fall through and
+	// get partial masking via the PATH replacer (preserves first 4
+	// segments). USER-in-home rule runs first so usernames inside
+	// shallow paths (/home/alice) still get masked independently.
+	if strings.HasPrefix(s, "/") && strings.Count(s, "/") <= 4 && !strings.ContainsAny(s, " \t\n") {
+		return true
+	}
+	// Path rooted under an OS-shipped bin dir (/bin/sh, /usr/bin/python).
+	// Catches DEEP paths under bin dirs too (/usr/bin/.../sub/dir/file)
+	// that fall past the shallow check. Filesystem paths are
+	// case-sensitive on Linux, so check raw s.
+	for _, p := range protectedBinDirs {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	// Bare interpreter / shell name, with optional version suffix
+	// (python3.12 → "python", bash5 → "bash", perl5.32 → "perl").
 	low := strings.ToLower(s)
+	bare := strings.TrimRightFunc(low, func(r rune) bool {
+		return (r >= '0' && r <= '9') || r == '.'
+	})
+	if bare != "" && protectedInterpreters[bare] {
+		return true
+	}
 	if protectedValues[low] {
 		return true
 	}
@@ -203,6 +255,14 @@ var (
 	// USER aggressive — also "as <name>" / "for <name>". Lots of false-positive
 	// risk ("as needed", "for example").
 	reUserAggressive = regexp.MustCompile(`(?i)\b(?:as|for)\s+([a-zA-Z][a-zA-Z0-9._-]{1,30})\b`)
+	// USER inside a home / mail directory path. Captures just the username
+	// portion so the surrounding path stays intact:
+	//   /home/alice → mask "alice", keep /home/<masked>
+	//   /Users/bob/Library → mask "bob", keep /Users/<masked>/Library
+	//   /var/spool/mail/carol → mask "carol", keep /var/spool/mail/<masked>
+	// Must fire before the PATH rule so the captured username byte range
+	// pre-empts a whole-path PATH match.
+	reUserHomePath = regexp.MustCompile(`(?:/home/|/Users/|/var/spool/mail/)([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
 
 	// PATH conservative — only absolute paths under known system roots.
 	// Covers FHS roots that commonly carry binary/library/config paths
@@ -974,6 +1034,10 @@ func coreRules() []Rule {
 		{Kind: KindAPIKey, Re: reAPIKeyAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reSecretAssign, CaptureGroup: 1, MinEntropy: 3.0},
 		{Kind: KindUser, Re: reMySQLUserAt, CaptureGroup: 1, Validate: validUser, Keyword: "'@'"},
+		// USER inside /home/<u> / /Users/<u> / /var/spool/mail/<u> — runs
+		// before tailRules' path rules so the username byte range is
+		// claimed first and the surrounding path stays intact.
+		{Kind: KindUser, Re: reUserHomePath, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
 		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},

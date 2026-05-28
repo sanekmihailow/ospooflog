@@ -40,14 +40,20 @@ func TestRoundTrip_FullCLI(t *testing.T) {
 	}
 	safeStr := string(safe)
 
-	// Originals must not leak.
+	// Originals must not leak. /var/lib/postgresql/data (4 segments)
+	// is intentionally preserved by the shallow-path policy — it's
+	// FHS-level structure, not PII — so it's NOT in this list and
+	// the assertion below confirms it remains in the output.
 	for _, leaked := range []string{
 		"10.23.41.5", "db-prod.internal", "alice", "corp.com",
-		"550e8400-e29b-41d4-a716-446655440000", "/var/lib/postgresql",
+		"550e8400-e29b-41d4-a716-446655440000",
 	} {
 		if strings.Contains(safeStr, leaked) {
 			t.Errorf("origin %q leaked into safe output:\n%s", leaked, safeStr)
 		}
+	}
+	if !strings.Contains(safeStr, "/var/lib/postgresql/data") {
+		t.Errorf("shallow path /var/lib/postgresql/data should pass through unchanged:\n%s", safeStr)
 	}
 
 	// Step 2 — synthesise an AI response that uses the replace values.
