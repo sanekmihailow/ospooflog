@@ -467,6 +467,45 @@ func TestProtectedInterpreters_NotMasked(t *testing.T) {
 	}
 }
 
+func TestProtectedValues_ExtendedCoverage(t *testing.T) {
+	// Bare names that should never be captured as USER (or any other
+	// kind) once they hit the protectedValues filter. Driven through the
+	// USER rule via a "user=<v>" prefix because USER in safe mode needs
+	// explicit context — the test is about the filter, not the capture
+	// surface.
+	values := []string{
+		// Web / proxy / lb software
+		"nginx", "apache", "httpd", "caddy", "envoy", "haproxy", "traefik",
+		// Databases / cache / queue
+		"postgres", "postgresql", "mariadb", "redis", "mongo", "mongodb",
+		"memcached", "memcache", "elasticsearch", "kafka", "rabbitmq",
+		// Standard system accounts
+		"nobody", "daemon", "www-data", "sshd", "messagebus", "dbus",
+		"polkitd", "_apt", "tcpdump", "chrony", "tss",
+		// Core init / system services
+		"systemd", "init", "kernel", "cron", "crond", "rsyslog",
+		"journald", "auditd", "cloud-init", "NetworkManager",
+		// Container runtime / orchestration
+		"containerd", "runc", "kubelet", "dockerd", "kube-proxy",
+		"kube-apiserver", "kubeadm",
+		// Generic infrastructure roles
+		"web", "api", "app", "worker", "cache", "queue",
+		"prod", "production", "staging", "dev", "qa",
+		"master", "slave", "primary", "replica", "standby",
+	}
+	for _, v := range values {
+		t.Run(v, func(t *testing.T) {
+			text := "user=" + v + " connected"
+			matches := New(BalancedRules()).Find(text)
+			for _, m := range matches {
+				if strings.EqualFold(m.Value, v) {
+					t.Errorf("protected value %q captured (kind=%s)", v, m.Kind)
+				}
+			}
+		})
+	}
+}
+
 func TestProtectedValues_DoNotShadowNeighbouringMatches(t *testing.T) {
 	// reMySQLUserAt's whole match spans 'vtiger_user'@'localhost'. The
 	// value-level protectedValues filter must not prevent vtiger_user
