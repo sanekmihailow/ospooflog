@@ -940,6 +940,57 @@ func TestJWT_UPNWithoutAtNotRoutedAsEmail(t *testing.T) {
 	}
 }
 
+func TestIP6_RejectsShortFormFromTextSeparator(t *testing.T) {
+	// "::" used as a separator in non-IPv6 tokens (k8s namespace paths,
+	// C++ namespaces, file path concatenations) generates ultra-short
+	// IPv6 forms like "e::", "ca::", "1::1" — all technically valid
+	// (e:0:0:0:0:0:0:0 etc) but never real addresses in operational
+	// logs. validIPv6's 4-hex-digit floor drops them while preserving
+	// legitimate fe80::* / 2001::* / fd00::* shapes.
+	cases := []struct {
+		text  string
+		bad   string
+		good  []string
+	}{
+		{
+			text: `name="client-ca-bundle::/var/lib/rancher/k3s/server/tls/client-ca.crt"`,
+			bad:  "e::",
+		},
+		{
+			text: `controller="client-ca::kube-system::extension-apiserver-authentication::client-ca-file"`,
+			bad:  "ca::",
+		},
+		{
+			text: `c++ namespace std::vector and 1::1 abbreviated`,
+			bad:  "1::1",
+		},
+		{
+			text: `valid link-local fe80::1 alongside 2001:db8::1`,
+			good: []string{"fe80::1", "2001:db8::1"},
+		},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		for _, m := range matches {
+			if m.Kind == KindIP6 && m.Value == tc.bad {
+				t.Errorf("short-form IPv6 %q captured from %q", tc.bad, tc.text)
+			}
+		}
+		for _, want := range tc.good {
+			var found bool
+			for _, m := range matches {
+				if m.Kind == KindIP6 && m.Value == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("real IPv6 %q not captured from %q", want, tc.text)
+			}
+		}
+	}
+}
+
 func TestIP6_RejectsTimestamps(t *testing.T) {
 	text := "2026-05-03 19:00:01 INFO ok at fe80::1 done"
 	matches := New(DefaultRules()).Find(text)

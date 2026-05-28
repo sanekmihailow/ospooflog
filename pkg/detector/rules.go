@@ -1065,7 +1065,20 @@ func validIPv6(s string) bool {
 	if ip.IsUnspecified() || ip.IsLoopback() {
 		return false
 	}
-	return true
+	// Ultra-short forms like "e::", "ca::", "1::1" are technically valid
+	// (e:0:0:0:0:0:0:0 etc) but in real log content they almost always
+	// come from "::" used as a separator in non-IP tokens:
+	// "client-ca-bundle::/var/lib/...", "kube-system::extension-...",
+	// C++ namespaces ("std::vector"). Require at least 4 hex digits so
+	// fe80::* and 2001::* pass while the false-positive shapes drop.
+	hexChars := 0
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			hexChars++
+		}
+	}
+	return hexChars >= 4
 }
 
 func validAddr(s string) bool {
