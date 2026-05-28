@@ -163,6 +163,16 @@ var protectedValues = map[string]bool{
 	"borg":       true,
 	"borgbackup": true,
 	"rsnapshot":  true,
+	// sudo / audit log field names. reUserConservative matches the
+	// "user:" separator in "sudo: user : TTY=pts/0 ; PWD=...; USER=root"
+	// and captures the field name as a USER value. These names are
+	// never real usernames in practice — protect them so the false
+	// match drops at the value filter.
+	"tty":     true,
+	"pwd":     true,
+	"cmd":     true,
+	"command": true,
+	"pts":     true,
 	// Generic infrastructure roles — env labels, replication roles,
 	// service-type names. These can in principle collide with real
 	// hostnames/usernames (e.g. a literal system user "app"), but in
