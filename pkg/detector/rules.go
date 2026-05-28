@@ -264,6 +264,22 @@ var protectedBinDirs = []string{
 	"/usr/local/sbin/",
 }
 
+// protectedFSPrefixes are pseudo-filesystem / runtime-state mountpoints
+// whose contents are kernel-exposed or session-state (/sys/class/net/eth0,
+// /proc/cpuinfo, /dev/sda1, /run/systemd/system/foo.service), not user
+// data. rePathConservative already excludes /proc, /sys, /dev, but
+// rePathAggressive (--mode balanced / aggressive) matches any 2+ segment
+// absolute path and reels them in. /run is in rePathConservative's FHS
+// allowlist but the contents (systemd unit drop-ins, pid files, locks)
+// are runtime state, not PII. Reject all four at the value-filter layer
+// for all rules / modes.
+var protectedFSPrefixes = []string{
+	"/proc/",
+	"/sys/",
+	"/dev/",
+	"/run/",
+}
+
 // protectedInterpreters are bare shell and interpreter names that
 // surface in audit logs as "shell=bash", "exec=perl", etc. — captured
 // by USER / PATH / HOST rules but obviously not PII. Lookup is
@@ -287,6 +303,14 @@ func isProtectedValue(s string) bool {
 	// shallow paths (/home/alice) still get masked independently.
 	if strings.HasPrefix(s, "/") && strings.Count(s, "/") <= 4 && !strings.ContainsAny(s, " \t\n") {
 		return true
+	}
+	// Pseudo-filesystem paths (/sys/class/net/eth0/operstate,
+	// /proc/cpuinfo, /dev/sda1) — kernel runtime state, never PII.
+	// Filesystem paths are case-sensitive on Linux, so check raw s.
+	for _, p := range protectedFSPrefixes {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
 	}
 	// Path rooted under an OS-shipped bin dir (/bin/sh, /usr/bin/python).
 	// Catches DEEP paths under bin dirs too (/usr/bin/.../sub/dir/file)
