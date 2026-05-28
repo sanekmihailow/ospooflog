@@ -853,6 +853,32 @@ var userStopWords = map[string]bool{
 	"the": true, "a": true, "an": true, "this": true, "that": true,
 	"running": true, "started": true, "stopped": true, "failed": true,
 	"done": true, "complete": true, "all": true, "any": true, "some": true,
+	// sshd auth-failure phrasing: "Failed password for invalid user X"
+	"invalid": true, "unknown": true,
+	// systemd / cloud-init / k3s phrasing: "Waiting for processes to
+	// exit", "running as service", "for volume <name>", "as DNS".
+	"processes": true, "service": true, "device": true, "network": true,
+	"domain": true, "local": true, "remote": true, "caches": true,
+	"cleanup": true, "current": true, "direct": true, "configured": true,
+	"base": true, "boot": true, "autoregister": true,
+	"volume": true, "sandbox": true, "key": true, "item": true,
+	"pod": true, "packages": true, "virtual": true, "shutdown": true,
+	"zone": true, "untainted": true, "requests": true, "reply": true,
+	"new": true, "more": true, "interrupt": true, "initramfs": true,
+	"initial": true, "informer": true, "host": true, "endpoint": true,
+	"easy": true, "each": true, "config": true, "data": true,
+	"events": true, "final": true, "mirror": true, "renaming": true,
+	"url": true,
+	// Mixed-case / domain-prefix tokens the acronym filter below misses
+	// (acronym filter only drops all-uppercase 2-5 chars).
+	"ipv4": true, "ipv6": true, "e820": true, "cpus": true, "apport": true,
+	"atomic": true, "apiservice": true, "localavailability": true,
+	"remoteavailability": true,
+	// Compound k8s / systemd component names with hyphens / underscores —
+	// the regex tokenisation allows these, so they slip past simple
+	// English-word stop lists.
+	"cloud-controller-manager": true, "kube-system": true,
+	"systemd-networkd": true, "rcu_fanout_leaf": true, "rtc0": true,
 	// Tokens after "user:" that are field names, not usernames
 	"name": true, "id": true, "uid": true, "gid": true,
 	// OS / distro names that get caught by "for <name>"
@@ -884,7 +910,28 @@ func validPassword(s string) bool {
 }
 
 func validUser(s string) bool {
-	return !userStopWords[strings.ToLower(s)]
+	if userStopWords[strings.ToLower(s)] {
+		return false
+	}
+	// All-uppercase 2-5 char tokens are acronyms (DNS, DB, CPU, IRQ,
+	// PCI, SMP, GRUB) that "as|for" patterns lift out of init/kernel
+	// messages, never usernames in practice. Length floor 2 keeps
+	// the regex's own 2-char minimum aligned; ceiling 5 covers GRUB
+	// while still allowing real all-caps usernames like "ADMIN6".
+	if n := len(s); n >= 2 && n <= 5 && isAllUpperAlpha(s) {
+		return false
+	}
+	return true
+}
+
+func isAllUpperAlpha(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 'A' || c > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 // validCard accepts only digit strings that start with a known card-brand
