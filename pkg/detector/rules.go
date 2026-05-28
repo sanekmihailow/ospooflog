@@ -971,8 +971,17 @@ func jwtExtra(sub []string) map[string]string {
 		return nil
 	}
 	extra := map[string]string{}
-	if v, ok := claims["email"].(string); ok && v != "" {
-		extra["claim:"+string(KindEmail)] = v
+	// Email comes from "email" or Microsoft's "upn" (User Principal
+	// Name, Azure AD / Office 365) — both are email-shaped principals
+	// and should map to the same fake so a user's email resolves
+	// consistently whether the JWT uses either field name. Filter to
+	// values containing '@' so legacy AD-style UPN values without a
+	// realm don't get mis-routed as KindEmail.
+	for _, key := range []string{"email", "upn"} {
+		if v, ok := claims[key].(string); ok && strings.Contains(v, "@") {
+			extra["claim:"+string(KindEmail)] = v
+			break
+		}
 	}
 	if v, ok := claims["phone_number"].(string); ok && v != "" {
 		extra["claim:"+string(KindPhone)] = v
