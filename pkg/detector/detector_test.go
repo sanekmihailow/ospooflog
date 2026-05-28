@@ -557,6 +557,28 @@ func TestFQDN_RejectsSourceFileExtensions(t *testing.T) {
 	}
 }
 
+func TestFQDN_RejectsFileExtensionTLDs(t *testing.T) {
+	// .md / .pub / .pid / .new are registered gTLDs that overwhelmingly
+	// appear as filename extensions in logs (README.md, id_rsa.pub,
+	// nginx.pid, /etc/passwd.new), not as actual hostnames. Blacklisted
+	// so they don't get FQDN-masked.
+	cases := []string{
+		"reading README.md for setup",
+		"checking ~/.ssh/id_rsa.pub authorized",
+		"loaded id_ed25519.pub key",
+		"writing pid to /var/run/nginx.pid",
+		"sshd.pid removed",
+		"saved as /etc/passwd.new before swap",
+		"diff against config.new",
+	}
+	for _, text := range cases {
+		matches := New(DefaultRules()).Find(text)
+		if c := findKinds(matches); c[KindFQDN] != 0 {
+			t.Errorf("text=%q: expected 0 FQDN matches, got %d (matches=%+v)", text, c[KindFQDN], matches)
+		}
+	}
+}
+
 func TestFQDN_RejectsArpaAndSystemdSuffixes(t *testing.T) {
 	// .arpa is the DNS-infrastructure TLD (in-addr.arpa, ip6.arpa) and
 	// .service / .target / .network etc. are systemd unit type
