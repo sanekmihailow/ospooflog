@@ -207,29 +207,59 @@ func TestPath_Conservative(t *testing.T) {
 }
 
 func TestPath_ExtendedSystemRoots(t *testing.T) {
-	// FHS roots /lib, /boot, /run only trigger PATH capture when the
-	// path is deep enough to escape the shallow-path protection (>4
-	// slashes). At that point conservative mode still respects the FHS
-	// root allowlist — anything under /custom stays unmatched.
+	// FHS roots /lib, /boot trigger PATH capture when deep enough to
+	// escape the shallow-path protection (>4 slashes). /run is in the
+	// conservative regex's FHS allowlist but its contents are runtime
+	// state (systemd unit drop-ins, pid files, locks) — protectedFSPrefixes
+	// drops them. Anything under /custom stays unmatched.
 	text := "ld /lib/x86_64-linux-gnu/extra/sub/libcrypto.so boot /boot/grub/themes/dark/v1/preset sock /run/systemd/units/runtime/v1/file but skip /custom/deeply/nested/file/inside"
 	matches := New(DefaultRules()).Find(text)
 	want := map[string]bool{
 		"/lib/x86_64-linux-gnu/extra/sub/libcrypto.so": false,
 		"/boot/grub/themes/dark/v1/preset":             false,
-		"/run/systemd/units/runtime/v1/file":           false,
 	}
 	for _, m := range matches {
-		if m.Kind == KindPath {
-			if _, ok := want[m.Value]; ok {
-				want[m.Value] = true
-			} else if strings.HasPrefix(m.Value, "/custom/") {
-				t.Errorf("conservative path leaked outside known roots: %q", m.Value)
-			}
+		if m.Kind != KindPath {
+			continue
+		}
+		if _, ok := want[m.Value]; ok {
+			want[m.Value] = true
+		} else if strings.HasPrefix(m.Value, "/custom/") {
+			t.Errorf("conservative path leaked outside known roots: %q", m.Value)
+		} else if strings.HasPrefix(m.Value, "/run/") {
+			t.Errorf("pseudo-fs path under /run captured: %q", m.Value)
 		}
 	}
 	for k, v := range want {
 		if !v {
 			t.Errorf("path not detected: %q", k)
+		}
+	}
+}
+
+func TestPath_PseudoFSPrefixesDropped(t *testing.T) {
+	// /proc, /sys, /dev, /run are pseudo-fs / runtime-state — never PII.
+	// Verify across DefaultRules + BalancedRules (aggressive PATH rule
+	// is enabled in balanced and would otherwise scoop these up).
+	cases := []string{
+		"reading /proc/sys/kernel/random/uuid for entropy",
+		"check /sys/class/net/eth0/operstate up",
+		"open /dev/disk/by-uuid/abc/deep/path for mount",
+		"socket at /run/systemd/system/foo.service.d/override",
+		"pid in /run/sshd/pid done",
+	}
+	for _, mode := range []string{"safe", "balanced"} {
+		rules := DefaultRules()
+		if mode == "balanced" {
+			rules = BalancedRules()
+		}
+		for _, text := range cases {
+			matches := New(rules).Find(text)
+			for _, m := range matches {
+				if m.Kind == KindPath {
+					t.Errorf("mode=%s: pseudo-fs path captured: %q from %q", mode, m.Value, text)
+				}
+			}
 		}
 	}
 }
