@@ -34,6 +34,83 @@ var protectedValues = map[string]bool{
 	"mysql":     true,
 	"root":      true,
 	"system":    true,
+	// Web / reverse proxy / load balancer software — process names that
+	// show up as USER captures in syslog ("nginx: worker process"), as
+	// k8s container names, or as systemd unit names. These are software,
+	// not people.
+	"nginx":   true,
+	"apache":  true,
+	"httpd":   true,
+	"caddy":   true,
+	"envoy":   true,
+	"haproxy": true,
+	"traefik": true,
+	// Databases / cache / queue — process names with the same treatment
+	// as mysql (which has been on this list since v0.3.1).
+	"postgres":      true,
+	"postgresql":    true,
+	"mariadb":       true,
+	"redis":         true,
+	"mongo":         true,
+	"mongodb":       true,
+	"memcached":     true,
+	"memcache":      true,
+	"elasticsearch": true,
+	"kafka":         true,
+	"rabbitmq":      true,
+	// Standard system accounts straight from /etc/passwd on a stock
+	// Debian/RHEL box. Not humans, not PII.
+	"nobody":     true,
+	"daemon":     true,
+	"www-data":   true,
+	"sshd":       true,
+	"messagebus": true,
+	"dbus":       true,
+	"polkitd":    true,
+	"_apt":       true,
+	"tcpdump":    true,
+	"chrony":     true,
+	"tss":        true,
+	// Core init / system services — process names in syslog, journald.
+	"systemd":        true,
+	"init":           true,
+	"kernel":         true,
+	"cron":           true,
+	"crond":          true,
+	"rsyslog":        true,
+	"journald":       true,
+	"auditd":         true,
+	"cloud-init":     true,
+	"networkmanager": true,
+	// Container runtime / orchestration component names.
+	"containerd":     true,
+	"runc":           true,
+	"kubelet":        true,
+	"dockerd":        true,
+	"kube-proxy":     true,
+	"kube-apiserver": true,
+	"kubeadm":        true,
+	// Generic infrastructure roles — env labels, replication roles,
+	// service-type names. These can in principle collide with real
+	// hostnames/usernames (e.g. a literal system user "app"), but in
+	// practice the role/label meaning dominates in the kinds of logs we
+	// process — kept on the allowlist by explicit user decision.
+	"web":        true,
+	"api":        true,
+	"app":        true,
+	"worker":     true,
+	"cache":      true,
+	"queue":      true,
+	"prod":       true,
+	"production": true,
+	"staging":    true,
+	"dev":        true,
+	"qa":         true,
+	"master":     true,
+	"slave":      true,
+	"primary":    true,
+	"replica":    true,
+	"standby":    true,
 	// Public software / OS vendor domains — masking these loses meaning
 	// for the AI (an "image is on serviceN.example.com" is useless;
 	// "image is on docker.io" is real context).
@@ -52,9 +129,9 @@ var protectedValues = map[string]bool{
 	"cattle.io":         true,
 	"traefik.io":        true,
 	// Code-hosting platforms.
-	"github.com":        true,
-	"gitlab.com":        true,
-	"bitbucket.org":     true,
+	"github.com":    true,
+	"gitlab.com":    true,
+	"bitbucket.org": true,
 	// Container registries — same reasoning.
 	"gcr.io":            true,
 	"ghcr.io":           true,
