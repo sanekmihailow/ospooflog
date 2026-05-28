@@ -532,6 +532,67 @@ func TestProtectedValues_ExtendedCoverage(t *testing.T) {
 	}
 }
 
+func TestValidUser_BalancedStopWords(t *testing.T) {
+	// reUserAggressive runs in --mode balanced and matches "as|for <word>".
+	// On real syslog it picks up English words and acronyms that are
+	// never usernames. Catches must be dropped at the validUser layer.
+	noUserCases := []struct {
+		name string
+		text string
+		bad  string
+	}{
+		{"invalid in sshd auth", "Failed password for invalid user test from 1.2.3.4 port 22", "invalid"},
+		{"processes in systemd-logind", "Session 1 logged out. Waiting for processes to exit.", "processes"},
+		{"caches in syslog", "Memory cgroup out of memory: reducing caches for service apache.", "caches"},
+		{"service noun", "running as service unit", "service"},
+		{"network as noun", "blocking traffic for network outage", "network"},
+		{"local noun", "config saved for local namespace", "local"},
+		{"DNS acronym", "lookup as DNS resolver", "DNS"},
+		{"DB acronym", "querying for DB connection", "DB"},
+		{"CPU acronym", "scheduling as CPU governor", "CPU"},
+		{"IRQ acronym", "remapped for IRQ handler", "IRQ"},
+		{"GRUB acronym", "config for GRUB loader", "GRUB"},
+		{"IPv4 mixed", "tagged as IPv4 address", "IPv4"},
+		{"E820 prefix", "marked as E820 reserved", "E820"},
+	}
+	for _, tc := range noUserCases {
+		t.Run(tc.name, func(t *testing.T) {
+			matches := New(BalancedRules()).Find(tc.text)
+			for _, m := range matches {
+				if m.Kind == KindUser && strings.EqualFold(m.Value, tc.bad) {
+					t.Errorf("stop-word %q captured as USER from %q", tc.bad, tc.text)
+				}
+			}
+		})
+	}
+
+	// Negative test: real usernames in the same shape must still match.
+	yesCases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{"sshd accepted", "Accepted publickey for alice from 1.2.3.4 port 22", "alice"},
+		{"sudo as user", "running as bob today", "bob"},
+		{"mixed-case username", "executed for sanekM in tty", "sanekM"},
+	}
+	for _, tc := range yesCases {
+		t.Run(tc.name, func(t *testing.T) {
+			matches := New(BalancedRules()).Find(tc.text)
+			var found bool
+			for _, m := range matches {
+				if m.Kind == KindUser && m.Value == tc.want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("real username %q not captured from %q", tc.want, tc.text)
+			}
+		})
+	}
+}
+
 func TestProtectedValues_SudoLogFieldNames(t *testing.T) {
 	// reUserConservative reads "<word>:<value>" as a user assignment,
 	// which catches the "user :" separator in a sudo line like
