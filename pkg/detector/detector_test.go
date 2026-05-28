@@ -512,6 +512,8 @@ func TestProtectedValues_ExtendedCoverage(t *testing.T) {
 		"wireguard", "openvpn", "strongswan", "racoon",
 		// Backup
 		"restic", "borg", "borgbackup", "rsnapshot",
+		// sudo/audit log field names
+		"tty", "pwd", "cmd", "command", "pts",
 		// Generic infrastructure roles
 		"web", "api", "app", "worker", "cache", "queue",
 		"prod", "production", "staging", "dev", "qa",
@@ -527,6 +529,24 @@ func TestProtectedValues_ExtendedCoverage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestProtectedValues_SudoLogFieldNames(t *testing.T) {
+	// reUserConservative reads "<word>:<value>" as a user assignment,
+	// which catches the "user :" separator in a sudo line like
+	// "sudo: user : TTY=pts/0 ; PWD=/home/user ; USER=root ; COMMAND=...".
+	// The field name on the right ("TTY") used to be captured as a USER
+	// value. tty/pwd/cmd/command/pts are now in protectedValues so the
+	// false match drops at the value filter without disturbing the
+	// legitimate "user" username capture.
+	text := "sudo:     user : TTY=pts/0 ; PWD=/home/user/dotfiles ; USER=root ; COMMAND=/usr/bin/chown"
+	matches := New(DefaultRules()).Find(text)
+	for _, m := range matches {
+		switch strings.ToUpper(m.Value) {
+		case "TTY", "PWD", "CMD", "COMMAND", "PTS":
+			t.Errorf("sudo log field name %q captured (kind=%s)", m.Value, m.Kind)
+		}
 	}
 }
 
