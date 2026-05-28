@@ -486,8 +486,32 @@ func TestProtectedValues_ExtendedCoverage(t *testing.T) {
 		"systemd", "init", "kernel", "cron", "crond", "rsyslog",
 		"journald", "auditd", "cloud-init", "NetworkManager",
 		// Container runtime / orchestration
-		"containerd", "runc", "kubelet", "dockerd", "kube-proxy",
-		"kube-apiserver", "kubeadm",
+		"containerd", "runc", "kubelet", "dockerd", "docker", "podman",
+		"lxc", "lxd", "kube-proxy", "kube-apiserver", "kubeadm",
+		// K8s addons / etcd / CNI
+		"etcd", "flannel", "calico", "cilium", "metallb",
+		// Service mesh
+		"istio", "linkerd", "consul",
+		// Package managers
+		"apt", "apt-get", "dpkg", "yum", "dnf", "apk", "pacman",
+		"zypper", "rpm", "snap", "snapd",
+		// DNS / LDAP / DHCP
+		"bind", "named", "slapd", "dhcpd", "dhclient",
+		// Storage / partitioning
+		"mdadm", "lvm", "cryptsetup", "blkid", "lsblk", "smartd",
+		// PAM modules
+		"pam_unix", "pam_systemd", "pam_winbind", "pam_krb5", "pam_sss",
+		// MAC frameworks
+		"selinux", "apparmor", "tomoyo", "smack",
+		// Mail daemons
+		"postfix", "dovecot", "exim", "sendmail", "opendkim",
+		"spamassassin", "amavis",
+		// Time sync
+		"ntpd", "chronyd", "timesyncd",
+		// VPN
+		"wireguard", "openvpn", "strongswan", "racoon",
+		// Backup
+		"restic", "borg", "borgbackup", "rsnapshot",
 		// Generic infrastructure roles
 		"web", "api", "app", "worker", "cache", "queue",
 		"prod", "production", "staging", "dev", "qa",
