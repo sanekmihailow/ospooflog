@@ -5,6 +5,40 @@ All notable changes to ospooflog are documented here. Format loosely follows
 narrative summary rather than a strict Added/Changed/Fixed split — see the
 linked PR for the full commit list.
 
+## [v0.3.4] — 2026-06-04
+
+Diff [v0.3.3...v0.3.4](https://github.com/sanekmihailow/ospooflog/compare/v0.3.3...v0.3.4)
+
+Aggregates several patch PRs merged into `dev`. No new CLI flags. One
+visible behaviour change: fake IPs now render in scope-specific ranges
+(`192.168.0.x` for private, `77.x` for public) instead of a single
+`192.168.1.x` block — existing session files still restore fine, since
+restore reads the stored mapping rather than regenerating it.
+
+- **IP masking by public/private scope** — routable origins map to
+  `77.0.0.0/8`, RFC1918 / ULA to `192.168.0.0/16`, each spread across
+  its free octets so neither overflows. An external attacker IP no
+  longer collapses into the same space as an internal host. Well-known
+  public resolvers (`8.8.8.8`, `1.1.1.1`, `9.9.9.9`, OpenDNS, AdGuard,
+  Yandex, plus the Google/Cloudflare/Quad9 IPv6 forms) are preserved as
+  global constants, like the public-domain allowlist.
+- **Cloud-provider internal DNS preserved** — `*.ec2.internal`,
+  `*.compute.internal` (AWS), `google.internal` (GCP metadata),
+  `*.c.<project>.internal` (GCP per-project), `*.ru-central1.internal`
+  (Yandex) carry "which cloud" context, not PII. Bare `.internal`
+  corporate hosts (`db-prod.internal`) are still masked.
+- **postgres / journald keyword usernames** — `for user "bob"`,
+  `role "readonly_user"`, `as user deploy` now mask the real account
+  name (was leaking) instead of capturing the noun `user`. Does not
+  break sshd's `Failed password for user from <ip>`.
+- **Card validator brand-length matrix** — 15-digit Luhn-valid IMEIs
+  (and other non-Amex 15-digit IDs) no longer masquerade as AmEx
+  cards; each length is pinned to its brand's prefix.
+- **TLD blacklist** — `.map` (JS/CSS sourcemaps) and `.cab` (Windows
+  cabinet) added to the file-extension exclusions.
+- **Balanced-mode `process`** — `starting as process <pid>` (mysqld)
+  no longer captures `process` as a username.
+
 ## [v0.3.3] — 2026-05-29
 
 PR [#20](https://github.com/sanekmihailow/ospooflog/pull/20) · Diff [v0.3.2...v0.3.3](https://github.com/sanekmihailow/ospooflog/compare/v0.3.2...v0.3.3)
