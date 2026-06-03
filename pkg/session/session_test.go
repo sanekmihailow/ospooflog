@@ -29,8 +29,8 @@ func TestSaveLoad_Roundtrip(t *testing.T) {
 
 	cases := []struct{ replace, origin string }{
 		{"user1", "alice"},
-		{"192.168.1.1", "10.1.2.3"},
-		{"192.168.1.1:5432", "10.1.2.3:5432"},
+		{"192.168.0.1", "10.1.2.3"},
+		{"192.168.0.1:5432", "10.1.2.3:5432"},
 	}
 	for _, c := range cases {
 		got, ok := m2.Restore(c.replace)

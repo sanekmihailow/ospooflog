@@ -7,12 +7,33 @@ import (
 	"github.com/sanekmihailow/ospooflog/pkg/detector"
 )
 
+// fakeIP renders the counter as a deterministic fake IPv4, choosing the
+// range by the origin's scope so public/private topology survives masking
+// (an external attacker IP shouldn't render in the same space as an
+// internal host). Both ranges spread the counter across their free octets
+// so they never overflow into invalid quads:
+//
+//   - public (extra["scope"]=="public") → 77.0.0.0/8, the three low octets
+//     hold ~16M fakes: 77.{n>>16}.{n>>8}.{n}. 77/8 is real RIPE space, but
+//     fakes only live in the obfuscated text the user pastes to an AI and
+//     are restored locally — never published, so collision with a routable
+//     host is harmless; the win is a visibly-external range.
+//   - private / unset → 192.168.0.0/16, the two low octets hold 65536
+//     fakes: 192.168.{n>>8}.{n}. Covers RFC1918 origins and any caller
+//     that registers KindIP with no scope extra.
+func fakeIP(n int, extra map[string]string) string {
+	if extra["scope"] == "public" {
+		return fmt.Sprintf("77.%d.%d.%d", (n>>16)&0xff, (n>>8)&0xff, n&0xff)
+	}
+	return fmt.Sprintf("192.168.%d.%d", (n>>8)&0xff, n&0xff)
+}
+
 // templates maps each entity kind to a builder function. The builder gets
 // the per-kind 1-based counter and optional extras pulled from the
 // original match (port for ADDR, scheme/host/port/db for DSN).
 var templates = map[detector.EntityKind]func(n int, extra map[string]string) string{
-	detector.KindIP: func(n int, _ map[string]string) string {
-		return fmt.Sprintf("192.168.1.%d", n)
+	detector.KindIP: func(n int, extra map[string]string) string {
+		return fakeIP(n, extra)
 	},
 	detector.KindIP6: func(n int, _ map[string]string) string {
 		return fmt.Sprintf("fd00::%x", n)
@@ -29,7 +50,7 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 		}
 		// Preserve the original port — AI needs to know it's PostgreSQL (5432)
 		// vs HTTPS (443) vs Redis (6379) for the advice to be useful.
-		return fmt.Sprintf("192.168.1.%d:%s", n, port)
+		return fakeIP(n, extra) + ":" + port
 	},
 	detector.KindHost: func(n int, _ map[string]string) string {
 		return fmt.Sprintf("myhost%d.local", n)

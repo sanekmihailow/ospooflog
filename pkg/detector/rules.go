@@ -19,11 +19,11 @@ import (
 //
 // Layering with --overrides:
 //
-//   user --overrides         hides origins with NUL placeholders pre-detection
-//     ↓
-//   protectedValues (this)   drops Match post-validate if value is in set
-//     ↓
-//   detection rules          regular obfuscation
+//	user --overrides         hides origins with NUL placeholders pre-detection
+//	  ↓
+//	protectedValues (this)   drops Match post-validate if value is in set
+//	  ↓
+//	detection rules          regular obfuscation
 //
 // Overrides win because the override pre-pass runs before the detector
 // sees the text — the value has been rewritten to a placeholder and is
@@ -95,11 +95,11 @@ var protectedValues = map[string]bool{
 	"kube-apiserver": true,
 	"kubeadm":        true,
 	// K8s addons / control plane store / CNI plugins.
-	"etcd":     true,
-	"flannel":  true,
-	"calico":   true,
-	"cilium":   true,
-	"metallb":  true,
+	"etcd":    true,
+	"flannel": true,
+	"calico":  true,
+	"cilium":  true,
+	"metallb": true,
 	// Service mesh / discovery.
 	"istio":   true,
 	"linkerd": true,
@@ -142,17 +142,17 @@ var protectedValues = map[string]bool{
 	"smack":    true,
 	// Mail daemons + spam/sig filters that ride syslog with the same
 	// daemon-tag shape as postfix.
-	"postfix":       true,
-	"dovecot":       true,
-	"exim":          true,
-	"sendmail":      true,
-	"opendkim":      true,
-	"spamassassin":  true,
-	"amavis":        true,
+	"postfix":      true,
+	"dovecot":      true,
+	"exim":         true,
+	"sendmail":     true,
+	"opendkim":     true,
+	"spamassassin": true,
+	"amavis":       true,
 	// Time sync daemons.
-	"ntpd":       true,
-	"chronyd":    true,
-	"timesyncd":  true,
+	"ntpd":      true,
+	"chronyd":   true,
+	"timesyncd": true,
 	// VPN / IPsec.
 	"wireguard":  true,
 	"openvpn":    true,
@@ -197,20 +197,20 @@ var protectedValues = map[string]bool{
 	// Public software / OS vendor domains — masking these loses meaning
 	// for the AI (an "image is on serviceN.example.com" is useless;
 	// "image is on docker.io" is real context).
-	"docker.io":         true,
-	"kubernetes.io":     true,
-	"k8s.io":            true,
-	"k3s.io":            true,
-	"redhat.com":        true,
-	"ubuntu.com":        true,
-	"kernel.org":        true,
-	"launchpad.net":     true,
-	"cloudinit.net":     true,
-	"openssh.com":       true,
-	"libssh.org":        true,
-	"rsyslog.com":       true,
-	"cattle.io":         true,
-	"traefik.io":        true,
+	"docker.io":     true,
+	"kubernetes.io": true,
+	"k8s.io":        true,
+	"k3s.io":        true,
+	"redhat.com":    true,
+	"ubuntu.com":    true,
+	"kernel.org":    true,
+	"launchpad.net": true,
+	"cloudinit.net": true,
+	"openssh.com":   true,
+	"libssh.org":    true,
+	"rsyslog.com":   true,
+	"cattle.io":     true,
+	"traefik.io":    true,
 	// Code-hosting platforms.
 	"github.com":    true,
 	"gitlab.com":    true,
@@ -222,7 +222,29 @@ var protectedValues = map[string]bool{
 	"registry.k8s.io":   true,
 	"mcr.microsoft.com": true,
 	"public.ecr.aws":    true,
+	// Cloud-provider internal DNS suffixes. These are fixed per provider
+	// (not per tenant), so they carry topology context — "instance in
+	// ec2.internal" tells the AI it's AWS — without being PII. Only the
+	// narrow known suffixes are listed; bare ".internal" is NOT, because
+	// it collides with corporate internal hostnames (db-prod.internal,
+	// vault.internal) that genuinely should be masked. Exact + subdomain
+	// matching comes for free from protectedDomainSuffixes (both
+	// "ec2.internal" and "ip-10-0-0-1.ec2.internal" match). GCP's per-
+	// project "<vm>.c.<project>.internal" form is handled separately by
+	// reGCPInternalDNS since <project> is variable.
+	"ec2.internal":         true, // AWS us-east-1
+	"compute.internal":     true, // AWS other regions
+	"google.internal":      true, // GCP metadata
+	"ru-central1.internal": true, // Yandex Cloud
+	"ru-central1.computeinstancesgroup.internal": true, // Yandex Cloud
 }
+
+// reGCPInternalDNS matches GCP's per-project internal instance DNS,
+// "<instance>.c.<project>.internal" and "<instance>.<zone>.c.<project>.internal".
+// The <project> label is tenant-specific so it can't be a fixed
+// protectedValues entry, but the ".c.<project>.internal" shape is a stable
+// GCP convention worth preserving like the other cloud suffixes.
+var reGCPInternalDNS = regexp.MustCompile(`(?i)\.c\.[a-z0-9][a-z0-9-]*\.internal$`)
 
 // protectedDomainSuffixes is the slice form of protectedValues entries
 // that contain a dot — used by isProtectedValue to also match subdomains
@@ -338,6 +360,11 @@ func isProtectedValue(s string) bool {
 			return true
 		}
 	}
+	// GCP per-project instance DNS (<vm>.c.<project>.internal) — the
+	// project label is variable so it isn't a fixed protectedValues entry.
+	if reGCPInternalDNS.MatchString(low) {
+		return true
+	}
 	for _, d := range protectedSlugSuffixes {
 		if strings.HasSuffix(low, d) {
 			return true
@@ -375,13 +402,13 @@ func isProtectedValue(s string) bool {
 var reSystemdUserPAM = regexp.MustCompile(`\bsystemd-user:`)
 
 var (
-	reDSN   = regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?|amqps?|kafka)://[^\s"'<>\x60]+`)
+	reDSN = regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?|amqps?|kafka)://[^\s"'<>\x60]+`)
 	// AWS ARN: "arn:partition:service:region:account-id:resource". Region
 	// and account-id are blank for some services (S3, IAM). Resource may
 	// contain "/" or ":" separators. Captured greedily up to whitespace
 	// or quote. Group 1 is service, group 2 is region — picked up by
 	// arnExtra so the fake can preserve the service kind.
-	reARN = regexp.MustCompile(`\barn:aws[a-z0-9-]*:([a-z0-9-]+):([a-z0-9-]*):[0-9]{0,12}:[a-zA-Z0-9_/:.\-]+`)
+	reARN   = regexp.MustCompile(`\barn:aws[a-z0-9-]*:([a-z0-9-]+):([a-z0-9-]*):[0-9]{0,12}:[a-zA-Z0-9_/:.\-]+`)
 	reJWT   = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{4,}\.eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b`)
 	reUUID  = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 	reEmail = regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`)
@@ -404,7 +431,12 @@ var (
 	// formatted lines.
 	reHostSyslog = regexp.MustCompile(`(?m)^(?:\d{4}-\d{2}-\d{2}T[\d:.+\-Z]+|[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+([a-zA-Z][a-zA-Z0-9._-]+)\s+\S+`)
 	// HOST conservative — must end in a private/internal-looking suffix.
-	reHostConservative = regexp.MustCompile(`\b[a-zA-Z0-9][a-zA-Z0-9-]*\.(?:local|internal|lan|home)\b`)
+	// Captures the FULL dotted name (all leading labels), not just the
+	// last one before the suffix, so cloud per-tenant internal DNS like
+	// "vm1.zone.c.<project>.internal" reaches isProtectedValue intact for
+	// the cloud-metadata allowlist check, and a multi-label internal host
+	// is masked as a whole rather than leaving its left labels exposed.
+	reHostConservative = regexp.MustCompile(`\b(?:[a-zA-Z0-9][a-zA-Z0-9-]*\.)+(?:local|internal|lan|home)\b`)
 	// HOST aggressive — single-label hostname with a hyphen, only after a
 	// "host=" / "server=" / "node=" keyword. Without the keyword anchor this
 	// matches any random "well-known" or "non-empty".
@@ -436,6 +468,20 @@ var (
 	// only httpd-family access logs produce. The leading [a-zA-Z0-9_] in the
 	// capture rejects the canonical "-" placeholder when no auth user is set.
 	reUserHTTPD = regexp.MustCompile(`(?m)^\S+\s+\S+\s+([a-zA-Z0-9_][a-zA-Z0-9._-]*)\s+\[\d{2}/[A-Z][a-z]{2}/\d{4}`)
+	// USER after the literal "user"/"role" keyword followed by a quoted
+	// identifier — postgres ('password authentication failed for user
+	// "bob"', 'role "readonly_user" does not exist'). The quotes make this
+	// unambiguous, so it runs in all modes. Without it the username leaks
+	// and the balanced "for <word>" rule grabs the noun "user" instead.
+	reUserRoleQuoted = regexp.MustCompile(`(?i)\b(?:user|role)\s+["']([a-zA-Z_][a-zA-Z0-9._-]{0,31})["']`)
+	// USER in "as user <name>" — the doubled "user" keyword after "as"
+	// marks the next token as the account name (journald 'connection ...
+	// as user app', 'running as user deploy'). Deliberately NOT "for user":
+	// sshd's "Failed password for user from <ip>" means the account *is*
+	// "user" and the following token is the next log field, so "for user
+	// <x>" would wrongly grab that field. Postgres's "for user "bob"" is
+	// quoted and handled by reUserRoleQuoted instead.
+	reUserAsKeyword = regexp.MustCompile(`(?i)\bas\s+user\s+["']?([a-zA-Z_][a-zA-Z0-9._-]{0,31})`)
 	// USER aggressive — also "as <name>" / "for <name>". Lots of false-positive
 	// risk ("as needed", "for example").
 	reUserAggressive = regexp.MustCompile(`(?i)\b(?:as|for)\s+([a-zA-Z][a-zA-Z0-9._-]{1,30})\b`)
@@ -791,11 +837,13 @@ var (
 // and ".mov" (archive / video extensions), ".bar" (the "foo.bar" idiom),
 // source-file extensions (".py", ".rb", ".go", ".sh"), DNS reverse
 // zones (".arpa"), Markdown/SSH-pubkey/PID/backup file extensions
-// (".md", ".pub", ".pid", ".new"), and pkg-manager/profiler/temp
+// (".md", ".pub", ".pid", ".new"), pkg-manager/profiler/temp
 // suffixes (".save" for rpmsave/passwd.save, ".prof" for Go pprof
-// dumps, ".work" for tmpdirs) — all shadow registered gTLDs but
-// dominantly appear as file paths in logs (README.md, id_rsa.pub,
-// nginx.pid, /etc/passwd.new, cpu.prof). Users can extend via
+// dumps, ".work" for tmpdirs), and build/archive artifacts (".map"
+// for JS/CSS sourcemaps like app.js.map, ".cab" for Windows cabinet
+// files) — all shadow registered gTLDs but dominantly appear as file
+// paths in logs and config files (README.md, id_rsa.pub, nginx.pid,
+// /etc/passwd.new, cpu.prof, bundle.js.map). Users can extend via
 // --overrides if a specific TLD is noisy in their logs.
 var validTLDs = func() map[string]bool {
 	m := make(map[string]bool, 1500)
@@ -805,7 +853,7 @@ var validTLDs = func() map[string]bool {
 			m[t] = true
 		}
 	}
-	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh", "arpa", "md", "pub", "pid", "new", "save", "prof", "work"} {
+	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh", "arpa", "md", "pub", "pid", "new", "save", "prof", "work", "map", "cab"} {
 		delete(m, t)
 	}
 	// systemd unit-type extensions look like TLDs (.target was applied for
@@ -881,7 +929,7 @@ var userStopWords = map[string]bool{
 	"invalid": true, "unknown": true,
 	// systemd / cloud-init / k3s phrasing: "Waiting for processes to
 	// exit", "running as service", "for volume <name>", "as DNS".
-	"processes": true, "service": true, "device": true, "network": true,
+	"process": true, "processes": true, "service": true, "device": true, "network": true,
 	"domain": true, "local": true, "remote": true, "caches": true,
 	"cleanup": true, "current": true, "direct": true, "configured": true,
 	"base": true, "boot": true, "autoregister": true,
@@ -933,6 +981,21 @@ func validPassword(s string) bool {
 	return true
 }
 
+// validUserLoose is validUser plus a rejection of the bare keywords
+// "user"/"role"/"username". The aggressive "as|for <word>" rule otherwise
+// captures the keyword itself out of "as user app" / "for user bob" when
+// the real name that follows is dropped (e.g. protected like "app") — the
+// keyword is never the account. The conservative / sshd rules keep using
+// validUser, so an account literally named "user" (user=user, "for user
+// user") is still masked through those explicit-context rules.
+func validUserLoose(s string) bool {
+	switch strings.ToLower(s) {
+	case "user", "role", "username":
+		return false
+	}
+	return validUser(s)
+}
+
 func validUser(s string) bool {
 	if userStopWords[strings.ToLower(s)] {
 		return false
@@ -958,29 +1021,60 @@ func isAllUpperAlpha(s string) bool {
 	return true
 }
 
-// validCard accepts only digit strings that start with a known card-brand
-// prefix (Visa/MC/AmEx/Discover/Diners/JCB) and pass the Luhn checksum.
-// The brand-prefix gate keeps random Luhn-valid IDs (timestamps, hashes)
-// from masquerading as cards.
+// validCard accepts only digit strings that match a known card-brand
+// (prefix + length) and pass the Luhn checksum. The brand gate keeps
+// random Luhn-valid IDs (timestamps, hashes, IMEIs) from masquerading as
+// cards.
+//
+// Length matters because some lengths belong to exactly one brand, and a
+// loose "first digit is 3/4/5/6" gate lets 15-digit IMEIs (Luhn-valid,
+// often starting 35/49) through as fake AmEx. The brand matrix:
+//
+//	len 13      → Visa only            (prefix 4)
+//	len 15      → Amex only            (prefix 34 / 37)
+//	len 14      → Diners               (prefix 30 / 36 / 38)
+//	len 16/19   → Visa/MC/Discover/JCB (prefix 3/4/5/6)
+//	len 17/18   → no major brand; reject
 func validCard(s string) bool {
-	var first byte
+	var first, second byte
 	count := 0
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if c < '0' || c > '9' {
 			continue
 		}
-		if count == 0 {
+		switch count {
+		case 0:
 			first = c
+		case 1:
+			second = c
 		}
 		count++
 	}
 	if count < 13 || count > 19 {
 		return false
 	}
-	switch first {
-	case '3', '4', '5', '6':
-	default:
+	p2 := string([]byte{first, second})
+	switch count {
+	case 13: // Visa
+		if first != '4' {
+			return false
+		}
+	case 14: // Diners Club
+		if p2 != "30" && p2 != "36" && p2 != "38" {
+			return false
+		}
+	case 15: // American Express
+		if p2 != "34" && p2 != "37" {
+			return false
+		}
+	case 16, 19: // Visa / Mastercard / Discover / JCB
+		switch first {
+		case '3', '4', '5', '6':
+		default:
+			return false
+		}
+	default: // 17, 18 — no major brand uses these
 		return false
 	}
 	sum := 0
@@ -1027,8 +1121,51 @@ func validSyslogHost(s string) bool {
 	return true
 }
 
+// ipScope returns "public" or "private" for a dotted-quad. RFC1918
+// (10/8, 172.16/12, 192.168/16) and RFC4193 ULA count as private via
+// net.IP.IsPrivate; everything else routable is public. Drives the
+// replacer's range choice so the public/private topology survives
+// masking (an external attacker IP shouldn't render in the same
+// 192.168.x space as an internal host).
+func ipScope(s string) string {
+	if ip := net.ParseIP(s); ip != nil && ip.IsPrivate() {
+		return "private"
+	}
+	return "public"
+}
+
+func ipExtra(sub []string) map[string]string {
+	return map[string]string{"scope": ipScope(sub[0])}
+}
+
 func addrExtra(sub []string) map[string]string {
-	return map[string]string{"ip": sub[1], "port": sub[2]}
+	return map[string]string{"ip": sub[1], "port": sub[2], "scope": ipScope(sub[1])}
+}
+
+// wellKnownPublicIPs are public DNS / anycast resolver addresses that are
+// global constants, not PII — same reasoning as the protectedValues domain
+// allowlist (docker.io, github.com). Masking "8.8.8.8" to a fake just
+// strips context the AI needs ("query to Google DNS failed" is signal).
+// Keys are canonical net.IP.String() form so textual IPv6 variants match.
+var wellKnownPublicIPs = map[string]bool{
+	// Google Public DNS
+	"8.8.8.8": true, "8.8.4.4": true,
+	// Cloudflare (1.1.1.1, plus family/malware-blocking variants)
+	"1.1.1.1": true, "1.0.0.1": true, "1.1.1.2": true, "1.1.1.3": true,
+	// Quad9
+	"9.9.9.9": true, "149.112.112.112": true,
+	// OpenDNS
+	"208.67.222.222": true, "208.67.220.220": true,
+	// Level3 / legacy public resolvers
+	"4.2.2.1": true, "4.2.2.2": true,
+	// AdGuard DNS
+	"94.140.14.14": true, "94.140.15.15": true,
+	// Yandex DNS
+	"77.88.8.8": true, "77.88.8.1": true,
+	// IPv6 resolvers — canonical (compressed) forms.
+	"2001:4860:4860::8888": true, "2001:4860:4860::8844": true, // Google
+	"2606:4700:4700::1111": true, "2606:4700:4700::1001": true, // Cloudflare
+	"2620:fe::fe": true, "2620:fe::9": true, // Quad9
 }
 
 func validIPv4(s string) bool {
@@ -1040,6 +1177,9 @@ func validIPv4(s string) bool {
 	// Pass through semantic constants — masking these turns "listening on
 	// 0.0.0.0" or "netmask 255.255.255.0" into nonsense for the AI.
 	if ip.IsUnspecified() || ip.IsLoopback() {
+		return false
+	}
+	if wellKnownPublicIPs[ip.String()] {
 		return false
 	}
 	if v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255 {
@@ -1063,6 +1203,9 @@ func validIPv6(s string) bool {
 		return false
 	}
 	if ip.IsUnspecified() || ip.IsLoopback() {
+		return false
+	}
+	if wellKnownPublicIPs[ip.String()] {
 		return false
 	}
 	// Ultra-short forms like "e::", "ca::", "1::1" are technically valid
@@ -1298,6 +1441,11 @@ func coreRules() []Rule {
 		// before tailRules' path rules so the username byte range is
 		// claimed first and the surrounding path stays intact.
 		{Kind: KindUser, Re: reUserHomePath, CaptureGroup: 1, Validate: validUser},
+		// "as user <name>" and quoted user/role "<name>" — run ahead of
+		// tailRules' reUserAggressive so the real account name is claimed
+		// before the bare "as <word>" rule can grab the keyword "user".
+		{Kind: KindUser, Re: reUserAsKeyword, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindUser, Re: reUserRoleQuoted, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
 		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},
@@ -1305,7 +1453,7 @@ func coreRules() []Rule {
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindMAC, Re: reMAC},
-		{Kind: KindIP, Re: reIP, Validate: validIPv4},
+		{Kind: KindIP, Re: reIP, Validate: validIPv4, ExtraFn: ipExtra},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
 	}
 }
@@ -1334,7 +1482,7 @@ func tailRules(host, user, path, port, b64 bool) []Rule {
 		Rule{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
 	)
 	if user {
-		r = append(r, Rule{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser})
+		r = append(r, Rule{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUserLoose})
 	}
 	r = append(r, Rule{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1})
 	if path {

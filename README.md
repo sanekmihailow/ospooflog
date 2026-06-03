@@ -99,7 +99,7 @@ cat ai_answer.txt | ospooflog -s session.json restore > real_instructions.txt
 ospooflog -s session.json show
 # TOKEN     KIND   ORIGIN              REPLACE
 # HOST_001  HOST   db-prod.internal    myhost1.local
-# IP_001    IP     10.23.41.5          192.168.1.1
+# IP_001    IP     10.23.41.5          192.168.0.1
 # USER_001  USER   alice               user1
 ```
 
@@ -119,11 +119,11 @@ ospooflog -s session.json show
 | PHONE    | `+14155552671`, `phone: 415-555-2671`                   | `+15555550001` (NANP fictional range)          |
 | UUID     | `550e8400-e29b-41d4-a716-446655440000`                  | `00000000-0000-0000-0000-000000000001`         |
 | EMAIL    | `alice@corp.com`                                        | `user1@example.com`                            |
-| ADDR     | `10.23.41.5:5432`                                       | `192.168.1.1:5432` (port preserved)            |
-| IP       | `10.23.41.5`                                            | `192.168.1.1`                                  |
+| ADDR     | `10.23.41.5:5432`                                       | `192.168.0.1:5432` (port preserved)            |
+| IP       | `10.23.41.5` (private), `203.0.113.5` (public)          | `192.168.0.1` / `77.0.0.1` (public → 77.0.0.0/8; well-known resolvers like `8.8.8.8` kept) |
 | IP6      | `fe80::1`                                               | `fd00::1`                                      |
 | MAC      | `aa:bb:cc:dd:ee:ff`                                     | `02:00:00:00:00:01` (locally-administered)     |
-| HOST     | `db-prod.internal`                                      | `myhost1.local`                                |
+| HOST     | `db-prod.internal` (corporate)                          | `myhost1.local`; cloud-provider internal DNS (`*.ec2.internal`, `*.compute.internal`, `*.c.<project>.internal`, `*.ru-central1.internal`, `google.internal`) is kept |
 | FQDN     | `api.example.com`, `host.xn--p1ai`                      | `service1.example.com` (full IANA TLD set)     |
 | USER     | `user=alice`, `Failed publickey for alice`              | `user1` (only the value swaps)                 |
 | PATH     | `/var/lib/postgresql/data`, `/sbin/auditctl`            | `/var/lib/myapp1/data`                         |
@@ -240,11 +240,11 @@ echo "user=alice handled by alice's team" | ospooflog -s s.json --mode balanced 
 ### Substring trap (strict restore is on by default)
 
 ```sh
-# session has 192.168.1.1 ↔ 10.1.2.3
-echo "also try 192.168.1.10 instead" | ospooflog -s s.json restore
-# also try 192.168.1.10 instead         # word-boundary check protects the AI's invented IP
+# session has 192.168.0.1 ↔ 10.1.2.3
+echo "also try 192.168.0.10 instead" | ospooflog -s s.json restore
+# also try 192.168.0.10 instead         # word-boundary check protects the AI's invented IP
 
-echo "also try 192.168.1.10 instead" | ospooflog -s s.json --fast-restore restore
+echo "also try 192.168.0.10 instead" | ospooflog -s s.json --fast-restore restore
 # also try 10.1.2.30 instead            # opt-in to fast restore — substring collision returns
 ```
 
@@ -289,8 +289,8 @@ swapped while keys, numbers and the JSON shape are preserved.
     "ADDR_001": {
       "kind": "ADDR",
       "origin": "10.23.41.5:5432",
-      "replace": "192.168.1.1:5432",
-      "extra": {"ip": "10.23.41.5", "port": "5432"}
+      "replace": "192.168.0.1:5432",
+      "extra": {"ip": "10.23.41.5", "port": "5432", "scope": "private"}
     }
   }
 }

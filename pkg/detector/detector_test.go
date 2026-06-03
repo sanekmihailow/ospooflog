@@ -143,6 +143,42 @@ func TestHost_LocalInternalSuffix(t *testing.T) {
 	}
 }
 
+func TestHost_CloudInternalDNSPreserved(t *testing.T) {
+	// Known cloud-provider internal DNS suffixes carry topology context
+	// (which cloud) but aren't PII — preserve them. Bare ".internal"
+	// corporate hosts must still be masked.
+	preserved := []string{
+		"ip-10-0-0-5.ec2.internal",                     // AWS us-east-1
+		"ip-10-1-2-3.eu-west-1.compute.internal",       // AWS other regions
+		"metadata.google.internal",                     // GCP metadata
+		"vm1.c.my-project-123.internal",                // GCP per-project (legacy)
+		"vm2.europe-west1-b.c.my-project-123.internal", // GCP per-project (zonal)
+		"host.ru-central1.internal",                    // Yandex Cloud
+	}
+	for _, h := range preserved {
+		text := "connect to " + h + " now"
+		for _, m := range New(DefaultRules()).Find(text) {
+			if m.Kind == KindHost && strings.Contains(h, m.Value) {
+				t.Errorf("cloud-internal host %q was masked (captured %q)", h, m.Value)
+			}
+		}
+	}
+
+	masked := []string{"db-prod.internal", "sub.vault.internal"}
+	for _, h := range masked {
+		text := "connect to " + h + " now"
+		var got bool
+		for _, m := range New(DefaultRules()).Find(text) {
+			if m.Kind == KindHost && m.Value == h {
+				got = true
+			}
+		}
+		if !got {
+			t.Errorf("corporate internal host %q should be masked, was not", h)
+		}
+	}
+}
+
 func TestFQDN_IANATLDsAndBlacklist(t *testing.T) {
 	cases := []struct {
 		text string
@@ -362,7 +398,7 @@ func TestEmail_RejectsSystemdUnitInstances(t *testing.T) {
 
 func TestProtectedValues_LeftAlone(t *testing.T) {
 	cases := []struct {
-		text    string
+		text     string
 		preserve string // substring that must remain in the output
 	}{
 		{"host=localhost connected", "localhost"},
@@ -573,6 +609,7 @@ func TestValidUser_BalancedStopWords(t *testing.T) {
 	}{
 		{"invalid in sshd auth", "Failed password for invalid user test from 1.2.3.4 port 22", "invalid"},
 		{"processes in systemd-logind", "Session 1 logged out. Waiting for processes to exit.", "processes"},
+		{"process in mysqld startup", "/usr/sbin/mysqld (mysqld 8.0.45) starting as process 1346583", "process"},
 		{"caches in syslog", "Memory cgroup out of memory: reducing caches for service apache.", "caches"},
 		{"service noun", "running as service unit", "service"},
 		{"network as noun", "blocking traffic for network outage", "network"},
@@ -620,6 +657,48 @@ func TestValidUser_BalancedStopWords(t *testing.T) {
 				t.Errorf("real username %q not captured from %q", tc.want, tc.text)
 			}
 		})
+	}
+}
+
+func TestUser_KeywordIdentifier(t *testing.T) {
+	// postgres / journald put the real account name after a literal
+	// "user"/"role" keyword. Capture it (and not the keyword noun),
+	// without breaking sshd's "for user <next-field>" shape.
+	type want struct {
+		present []string // must be captured as USER
+		absent  []string // must NOT be captured as USER
+	}
+	cases := []struct {
+		text string
+		w    want
+	}{
+		// postgres quoted identifiers
+		{`password authentication failed for user "bob"`, want{[]string{"bob"}, []string{"user"}}},
+		{`role "readonly_user" does not exist`, want{[]string{"readonly_user"}, []string{"role"}}},
+		// journald / generic "as user <name>"
+		{`connection from 10.0.0.8 as user deploy`, want{[]string{"deploy"}, []string{"user"}}},
+		{`connect as user johndoe ok`, want{[]string{"johndoe"}, []string{"user"}}},
+		// sshd: "user" IS the account, "from" is the next field — must not
+		// flip to capturing "from", and must still mask the account "user".
+		{`Failed password for user from 1.2.3.4`, want{[]string{"user"}, []string{"from"}}},
+	}
+	for _, tc := range cases {
+		got := map[string]bool{}
+		for _, m := range New(BalancedRules()).Find(tc.text) {
+			if m.Kind == KindUser {
+				got[m.Value] = true
+			}
+		}
+		for _, v := range tc.w.present {
+			if !got[v] {
+				t.Errorf("%q: expected USER %q, got %v", tc.text, v, got)
+			}
+		}
+		for _, v := range tc.w.absent {
+			if got[v] {
+				t.Errorf("%q: %q should NOT be captured as USER", tc.text, v)
+			}
+		}
 	}
 }
 
@@ -693,11 +772,11 @@ func TestFQDN_RejectsSourceFileExtensions(t *testing.T) {
 }
 
 func TestFQDN_RejectsFileExtensionTLDs(t *testing.T) {
-	// .md / .pub / .pid / .new / .save / .prof / .work are registered
-	// gTLDs that overwhelmingly appear as filename extensions in logs
-	// (README.md, id_rsa.pub, nginx.pid, /etc/passwd.new, passwd.save,
-	// cpu.prof), not as actual hostnames. Blacklisted so they don't
-	// get FQDN-masked.
+	// .md / .pub / .pid / .new / .save / .prof / .work / .map / .cab are
+	// registered gTLDs that overwhelmingly appear as filename extensions
+	// in logs and config files (README.md, id_rsa.pub, nginx.pid,
+	// /etc/passwd.new, passwd.save, cpu.prof, bundle.js.map), not as
+	// actual hostnames. Blacklisted so they don't get FQDN-masked.
 	cases := []string{
 		"reading README.md for setup",
 		"checking ~/.ssh/id_rsa.pub authorized",
@@ -711,6 +790,9 @@ func TestFQDN_RejectsFileExtensionTLDs(t *testing.T) {
 		"profile dumped to cpu.prof in /tmp",
 		"go tool pprof heap.prof open",
 		"tmp build dir build.work cleaned",
+		"serving app.js.map sourcemap",
+		"GET /static/bundle.css.map 200",
+		"extracting update.cab archive",
 	}
 	for _, text := range cases {
 		matches := New(DefaultRules()).Find(text)
@@ -744,7 +826,7 @@ func TestFQDN_PreservesPublicDomainsAndSubdomains(t *testing.T) {
 	// Public software / OS / registry domains in protectedValues, plus
 	// their subdomains via the "*.<domain>" suffix matcher.
 	cases := []struct {
-		text string
+		text     string
 		preserve string
 	}{
 		{"image pulled from docker.io/library/nginx", "docker.io"},
@@ -771,7 +853,7 @@ func TestEmail_RejectsGoModulePathsAndKernelCreditDomains(t *testing.T) {
 	// that isn't .com / .org / etc. is rejected. dm-devel@redhat.com is
 	// preserved via the domain-half check in isProtectedValue.
 	cases := []struct {
-		text string
+		text        string
 		expectEmail bool
 	}{
 		{`reflector="k8s.io/client-go@v1.33.6-k3s1/tools/cache/reflector.go:285"`, false},
@@ -797,7 +879,7 @@ func TestPassword_RejectsSudoPWDPath(t *testing.T) {
 	// "PWD=/home/system" in sudo logs is the present working directory,
 	// not a password. validPassword rejects values starting with /.
 	cases := []struct {
-		text string
+		text      string
 		expectPwd bool
 	}{
 		{"sudo: PWD=/home/system ; USER=root", false},
@@ -948,9 +1030,9 @@ func TestIP6_RejectsShortFormFromTextSeparator(t *testing.T) {
 	// logs. validIPv6's 4-hex-digit floor drops them while preserving
 	// legitimate fe80::* / 2001::* / fd00::* shapes.
 	cases := []struct {
-		text  string
-		bad   string
-		good  []string
+		text string
+		bad  string
+		good []string
 	}{
 		{
 			text: `name="client-ca-bundle::/var/lib/rancher/k3s/server/tls/client-ca.crt"`,
@@ -1028,6 +1110,81 @@ func TestIP_RejectsInvalidOctets(t *testing.T) {
 	}
 }
 
+func TestIP_ScopeExtra(t *testing.T) {
+	// The IP rule tags each match with scope public/private so the
+	// replacer can pick 77/8 vs 192.168/16. RFC1918 → private, routable
+	// → public. ADDR carries the same tag derived from its IP half.
+	cases := []struct {
+		text  string
+		value string
+		scope string
+	}{
+		{"client 10.1.2.3 connected", "10.1.2.3", "private"},
+		{"client 192.168.5.5 connected", "192.168.5.5", "private"},
+		{"client 172.16.9.9 connected", "172.16.9.9", "private"},
+		{"client 203.0.113.7 connected", "203.0.113.7", "public"},
+		{"client 198.51.100.4 connected", "198.51.100.4", "public"},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var found bool
+		for _, m := range matches {
+			if m.Kind == KindIP && m.Value == tc.value {
+				found = true
+				if got := m.Extra["scope"]; got != tc.scope {
+					t.Errorf("%s: scope=%q want %q", tc.value, got, tc.scope)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("IP %q not detected in %q", tc.value, tc.text)
+		}
+	}
+
+	// ADDR inherits scope from the IP half.
+	for _, m := range New(DefaultRules()).Find("upstream 198.51.100.4:443 down") {
+		if m.Kind == KindAddr && m.Extra["scope"] != "public" {
+			t.Errorf("ADDR public IP: scope=%q want public", m.Extra["scope"])
+		}
+	}
+}
+
+func TestIP_WellKnownPublicResolversPreserved(t *testing.T) {
+	// Public DNS / anycast resolver IPs are global constants, not PII —
+	// must pass through unmasked so the AI keeps the context.
+	preserved := []string{
+		"8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9",
+		"208.67.222.222", "4.2.2.2", "94.140.14.14", "77.88.8.8",
+		"2001:4860:4860::8888", "2606:4700:4700::1111", "2620:fe::fe",
+	}
+	for _, ip := range preserved {
+		text := "resolver configured as " + ip + " ok"
+		for _, m := range New(DefaultRules()).Find(text) {
+			if (m.Kind == KindIP || m.Kind == KindIP6) && m.Value == ip {
+				t.Errorf("well-known resolver %q was masked (kind=%s)", ip, m.Kind)
+			}
+		}
+	}
+
+	// A non-resolver public IP in the same shape must still be masked.
+	var masked bool
+	for _, m := range New(DefaultRules()).Find("resolver configured as 203.0.113.9 ok") {
+		if m.Kind == KindIP && m.Value == "203.0.113.9" {
+			masked = true
+		}
+	}
+	if !masked {
+		t.Error("ordinary public IP 203.0.113.9 should still be detected/masked")
+	}
+
+	// 8.8.8.8:53 (ADDR) inherits the preservation via validAddr→validIPv4.
+	for _, m := range New(DefaultRules()).Find("upstream 8.8.8.8:53 configured") {
+		if m.Kind == KindAddr {
+			t.Errorf("well-known resolver ADDR 8.8.8.8:53 was masked: %q", m.Value)
+		}
+	}
+}
+
 func TestCreditCard_LuhnAndBrand(t *testing.T) {
 	cases := []struct {
 		text string
@@ -1041,12 +1198,25 @@ func TestCreditCard_LuhnAndBrand(t *testing.T) {
 		{"PAN 4111 1111 1111 1111 ok", []string{"4111 1111 1111 1111"}},
 		// AmEx test card, 15 digits, hyphenated 4-6-5
 		{"amex 3782-822463-10005 ok", []string{"3782-822463-10005"}},
+		// AmEx 15 digits, no separators (prefix 37)
+		{"amex 378282246310005 ok", []string{"378282246310005"}},
+		// Diners Club, 14 digits (prefix 30)
+		{"diners 30569309025904 ok", []string{"30569309025904"}},
+		// Visa, 13 digits (legacy)
+		{"visa 4222222222222 ok", []string{"4222222222222"}},
 		// Random 16 digits — Luhn invalid → not a match
 		{"id 1234567890123456 ok", nil},
 		// All zeros — passes Luhn but brand digit '0' rejected
 		{"id 0000000000000000 ok", nil},
 		// Brand digit '7' — rejected even if Luhn-valid (test case has bad Luhn anyway)
 		{"id 7111111111111111 ok", nil},
+		// IMEI: 15-digit Luhn-valid but not an Amex prefix (34/37) → reject.
+		// 15 digits belong to Amex only; a 49.../35... prefix is a device id.
+		{"IMEI 490154203237518 reported", nil},
+		{"imei=356938035643809 seen", nil},
+		// 15-digit Luhn-valid starting with a non-Amex 3x (JCB prefix is 16
+		// digits, so 15 here is not a card).
+		{"id 356938035643809 ok", nil},
 	}
 	for _, tc := range cases {
 		matches := New(DefaultRules()).Find(tc.text)

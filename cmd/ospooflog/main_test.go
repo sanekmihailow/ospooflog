@@ -58,7 +58,7 @@ func TestRoundTrip_FullCLI(t *testing.T) {
 
 	// Step 2 — synthesise an AI response that uses the replace values.
 	// Pull a couple out of the safe text by grepping known templates.
-	if !strings.Contains(safeStr, "192.168.1.") {
+	if !strings.Contains(safeStr, "192.168.0.") {
 		t.Fatalf("safe output missing IP-shaped replacement:\n%s", safeStr)
 	}
 
@@ -96,6 +96,65 @@ Recommended steps:
 	// is preserved verbatim.
 	if !strings.HasPrefix(resultStr, "2026-05-03 19:00:01 ERROR dial tcp 10.23.41.5:5432") {
 		t.Errorf("prefix not preserved through round-trip:\n%s", resultStr)
+	}
+}
+
+// TestRoundTrip_PEMAndIPScope locks in two things the format sweep
+// verified by hand: a multi-line PEM private-key block round-trips
+// byte-for-byte (the body spans newlines, the trickiest replace shape),
+// and the public/private IP scope split plus well-known-resolver
+// preservation survive a full CLI obfuscate→restore.
+func TestRoundTrip_PEMAndIPScope(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "in.log")
+	safeFile := filepath.Join(dir, "safe.txt")
+	resultFile := filepath.Join(dir, "out.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	raw := `internal 10.0.0.8 external 203.0.113.5 resolver 8.8.8.8
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtz
+c2gtZWQyNTUxOQAAACDvuMQ3pAaKw9P7eq7Dn5Hd5e6Z4mZ5Z4mZ5Z4mZ5Z4g
+-----END OPENSSH PRIVATE KEY-----
+done
+`
+	if err := os.WriteFile(logFile, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "obfuscate"}); err != nil {
+		t.Fatalf("obfuscate failed: %v", err)
+	}
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safeStr := string(safe)
+
+	// PEM body masked to a single token; private → 192.168/16, public →
+	// 77/8; well-known resolver 8.8.8.8 preserved.
+	for _, want := range []string{"FAKE_PRIVATE_KEY_", "192.168.0.", "77.0.0.", "8.8.8.8"} {
+		if !strings.Contains(safeStr, want) {
+			t.Errorf("safe output missing %q:\n%s", want, safeStr)
+		}
+	}
+	// The BEGIN/END markers are not secret and stay; the base64 key body
+	// is what must be gone.
+	for _, leaked := range []string{"10.0.0.8", "203.0.113.5", "b3BlbnNzaC1rZXktdjEA"} {
+		if strings.Contains(safeStr, leaked) {
+			t.Errorf("origin %q leaked:\n%s", leaked, safeStr)
+		}
+	}
+
+	// Round-trip restores the original byte-for-byte, multi-line key included.
+	if err := run([]string{"-i", safeFile, "-o", resultFile, "-s", sessionFile, "restore"}); err != nil {
+		t.Fatalf("restore failed: %v", err)
+	}
+	result, err := os.ReadFile(resultFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result) != raw {
+		t.Errorf("round-trip not byte-exact:\n--- want ---\n%s\n--- got ---\n%s", raw, result)
 	}
 }
 
@@ -153,7 +212,7 @@ func TestFastRestore_FallsForSubstringTrap(t *testing.T) {
 	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "obfuscate"}); err != nil {
 		t.Fatal(err)
 	}
-	aiText := "see 192.168.1.10 for context"
+	aiText := "see 192.168.0.10 for context"
 	if err := os.WriteFile(aiFile, []byte(aiText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +220,7 @@ func TestFastRestore_FallsForSubstringTrap(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, _ := os.ReadFile(resultFile)
-	// Fast mode falls for the trap: replaces "192.168.1.1" inside "192.168.1.10".
+	// Fast mode falls for the trap: replaces "192.168.0.1" inside "192.168.0.10".
 	if !strings.Contains(string(got), "10.23.41.50") {
 		t.Errorf("expected fast-restore substring trap to produce '10.23.41.50' in: %s", got)
 	}
@@ -183,7 +242,7 @@ func TestRoundTrip_StrictMode(t *testing.T) {
 	}
 
 	// AI invents an unrelated IP that happens to start with our replace value.
-	aiText := "to fix, also check 192.168.1.10 for context\nour mapped one stays at 192.168.1.1"
+	aiText := "to fix, also check 192.168.0.10 for context\nour mapped one stays at 192.168.0.1"
 	if err := os.WriteFile(aiFile, []byte(aiText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -197,8 +256,8 @@ func TestRoundTrip_StrictMode(t *testing.T) {
 	}
 	got := string(result)
 
-	if !strings.Contains(got, "192.168.1.10") {
-		t.Errorf("strict mode should preserve the AI's unrelated 192.168.1.10:\n%s", got)
+	if !strings.Contains(got, "192.168.0.10") {
+		t.Errorf("strict mode should preserve the AI's unrelated 192.168.0.10:\n%s", got)
 	}
 	if !strings.Contains(got, "10.23.41.5") {
 		t.Errorf("strict mode should still restore real mapping:\n%s", got)
@@ -226,7 +285,7 @@ func TestShow_PrintsMapping(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := string(out)
-	for _, want := range []string{"TOKEN", "KIND", "ORIGIN", "REPLACE", "alice", "user1", "10.1.2.3", "192.168.1.1"} {
+	for _, want := range []string{"TOKEN", "KIND", "ORIGIN", "REPLACE", "alice", "user1", "10.1.2.3", "192.168.0.1"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("show output missing %q:\n%s", want, got)
 		}
@@ -314,7 +373,7 @@ func TestOverrides_CustomReplaceWins(t *testing.T) {
 		}
 	}
 	// Non-overridden origin still uses template.
-	if !strings.Contains(safeStr, "192.168.1.") {
+	if !strings.Contains(safeStr, "192.168.0.") {
 		t.Errorf("template-derived replacement missing for non-overridden IP:\n%s", safeStr)
 	}
 
@@ -373,14 +432,14 @@ func TestJSON_NDJSONRoundTrip(t *testing.T) {
 			t.Errorf("origin %q leaked: %s", leaked, safeStr)
 		}
 	}
-	for _, want := range []string{`"user":"user1"`, `"user":"user2"`, `"ip":"192.168.1.1"`, `"ip":"192.168.1.2"`} {
+	for _, want := range []string{`"user":"user1"`, `"user":"user2"`, `"ip":"192.168.0.1"`, `"ip":"192.168.0.2"`} {
 		if !strings.Contains(safeStr, want) {
 			t.Errorf("missing %q in safe output: %s", want, safeStr)
 		}
 	}
 
 	// Restore round-trip — AI response references the fakes, restore yields originals.
-	aiText := "Action items: ask user1 (192.168.1.1) and user2 (192.168.1.2) to retry."
+	aiText := "Action items: ask user1 (192.168.0.1) and user2 (192.168.0.2) to retry."
 	if err := os.WriteFile(aiFile, []byte(aiText), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +478,7 @@ func TestJSON_KubernetesPrefixFallsBackToPlain(t *testing.T) {
 	if strings.Contains(got, "10.1.2.3") || strings.Contains(got, "alice") {
 		t.Errorf("k8s-prefix fallback didn't obfuscate: %s", got)
 	}
-	if !strings.Contains(got, "192.168.1.1") || !strings.Contains(got, "user1") {
+	if !strings.Contains(got, "192.168.0.1") || !strings.Contains(got, "user1") {
 		t.Errorf("k8s-prefix fallback missing replacements: %s", got)
 	}
 }
@@ -449,10 +508,10 @@ func TestObfuscate_AppendsToExistingSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(bSafe), "192.168.1.1") {
-		t.Errorf("expected 192.168.1.1 (stable mapping for 10.1.2.3): %s", bSafe)
+	if !strings.Contains(string(bSafe), "192.168.0.1") {
+		t.Errorf("expected 192.168.0.1 (stable mapping for 10.1.2.3): %s", bSafe)
 	}
-	if !strings.Contains(string(bSafe), "192.168.1.2") {
-		t.Errorf("expected 192.168.1.2 (new mapping for 10.4.5.6): %s", bSafe)
+	if !strings.Contains(string(bSafe), "192.168.0.2") {
+		t.Errorf("expected 192.168.0.2 (new mapping for 10.4.5.6): %s", bSafe)
 	}
 }
