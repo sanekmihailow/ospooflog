@@ -1029,8 +1029,51 @@ func validSyslogHost(s string) bool {
 	return true
 }
 
+// ipScope returns "public" or "private" for a dotted-quad. RFC1918
+// (10/8, 172.16/12, 192.168/16) and RFC4193 ULA count as private via
+// net.IP.IsPrivate; everything else routable is public. Drives the
+// replacer's range choice so the public/private topology survives
+// masking (an external attacker IP shouldn't render in the same
+// 192.168.x space as an internal host).
+func ipScope(s string) string {
+	if ip := net.ParseIP(s); ip != nil && ip.IsPrivate() {
+		return "private"
+	}
+	return "public"
+}
+
+func ipExtra(sub []string) map[string]string {
+	return map[string]string{"scope": ipScope(sub[0])}
+}
+
 func addrExtra(sub []string) map[string]string {
-	return map[string]string{"ip": sub[1], "port": sub[2]}
+	return map[string]string{"ip": sub[1], "port": sub[2], "scope": ipScope(sub[1])}
+}
+
+// wellKnownPublicIPs are public DNS / anycast resolver addresses that are
+// global constants, not PII — same reasoning as the protectedValues domain
+// allowlist (docker.io, github.com). Masking "8.8.8.8" to a fake just
+// strips context the AI needs ("query to Google DNS failed" is signal).
+// Keys are canonical net.IP.String() form so textual IPv6 variants match.
+var wellKnownPublicIPs = map[string]bool{
+	// Google Public DNS
+	"8.8.8.8": true, "8.8.4.4": true,
+	// Cloudflare (1.1.1.1, plus family/malware-blocking variants)
+	"1.1.1.1": true, "1.0.0.1": true, "1.1.1.2": true, "1.1.1.3": true,
+	// Quad9
+	"9.9.9.9": true, "149.112.112.112": true,
+	// OpenDNS
+	"208.67.222.222": true, "208.67.220.220": true,
+	// Level3 / legacy public resolvers
+	"4.2.2.1": true, "4.2.2.2": true,
+	// AdGuard DNS
+	"94.140.14.14": true, "94.140.15.15": true,
+	// Yandex DNS
+	"77.88.8.8": true, "77.88.8.1": true,
+	// IPv6 resolvers — canonical (compressed) forms.
+	"2001:4860:4860::8888": true, "2001:4860:4860::8844": true, // Google
+	"2606:4700:4700::1111": true, "2606:4700:4700::1001": true, // Cloudflare
+	"2620:fe::fe": true, "2620:fe::9": true, // Quad9
 }
 
 func validIPv4(s string) bool {
@@ -1042,6 +1085,9 @@ func validIPv4(s string) bool {
 	// Pass through semantic constants — masking these turns "listening on
 	// 0.0.0.0" or "netmask 255.255.255.0" into nonsense for the AI.
 	if ip.IsUnspecified() || ip.IsLoopback() {
+		return false
+	}
+	if wellKnownPublicIPs[ip.String()] {
 		return false
 	}
 	if v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255 {
@@ -1065,6 +1111,9 @@ func validIPv6(s string) bool {
 		return false
 	}
 	if ip.IsUnspecified() || ip.IsLoopback() {
+		return false
+	}
+	if wellKnownPublicIPs[ip.String()] {
 		return false
 	}
 	// Ultra-short forms like "e::", "ca::", "1::1" are technically valid
@@ -1307,7 +1356,7 @@ func coreRules() []Rule {
 		{Kind: KindEmail, Re: reEmail, Validate: validEmail},
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindMAC, Re: reMAC},
-		{Kind: KindIP, Re: reIP, Validate: validIPv4},
+		{Kind: KindIP, Re: reIP, Validate: validIPv4, ExtraFn: ipExtra},
 		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
 	}
 }
