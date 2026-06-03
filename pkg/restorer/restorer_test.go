@@ -19,7 +19,7 @@ func TestRestore_FastBasic(t *testing.T) {
 	m.Obfuscate("10.1.2.3", detector.KindIP, nil)
 
 	r := New(m, false)
-	in := "Login as user1 from 192.168.1.1"
+	in := "Login as user1 from 192.168.0.1"
 	want := "Login as alice from 10.1.2.3"
 	if got := r.Restore(in); got != want {
 		t.Errorf("got %q want %q", got, want)
@@ -27,15 +27,15 @@ func TestRestore_FastBasic(t *testing.T) {
 }
 
 func TestRestore_LongestFirst(t *testing.T) {
-	// 11 IPs registered — replace values grow to "192.168.1.10", "192.168.1.11".
-	// Without longest-first sort, "192.168.1.1" would shadow "192.168.1.10".
+	// 11 IPs registered — replace values grow to "192.168.0.10", "192.168.0.11".
+	// Without longest-first sort, "192.168.0.1" would shadow "192.168.0.10".
 	m := newMapper()
 	for i := 1; i <= 11; i++ {
 		m.Obfuscate(strings.Repeat("a", i), detector.KindIP, nil) // unique origins
 	}
 	r := New(m, false)
-	// Origin for IP_010 was 10 a's; replace was "192.168.1.10".
-	in := "address 192.168.1.10 here"
+	// Origin for IP_010 was 10 a's; replace was "192.168.0.10".
+	in := "address 192.168.0.10 here"
 	want := "address " + strings.Repeat("a", 10) + " here"
 	if got := r.Restore(in); got != want {
 		t.Errorf("got %q want %q", got, want)
@@ -44,17 +44,17 @@ func TestRestore_LongestFirst(t *testing.T) {
 
 func TestRestore_StrictAvoidsSubstringFalsePositive(t *testing.T) {
 	m := newMapper()
-	m.Obfuscate("10.1.2.3", detector.KindIP, nil) // -> 192.168.1.1
+	m.Obfuscate("10.1.2.3", detector.KindIP, nil) // -> 192.168.0.1
 
 	rStrict := New(m, true)
 	// AI mentions an IP that wasn't in the mapping but starts with our replace value.
-	in := "try 192.168.1.10 instead"
+	in := "try 192.168.0.10 instead"
 	if got := rStrict.Restore(in); got != in {
 		t.Errorf("strict mode corrupted unrelated string: got %q", got)
 	}
 
 	// Sanity: strict still restores legitimate hits.
-	in2 := "use 192.168.1.1 for that"
+	in2 := "use 192.168.0.1 for that"
 	want2 := "use 10.1.2.3 for that"
 	if got := rStrict.Restore(in2); got != want2 {
 		t.Errorf("strict failed legit replace: got %q want %q", got, want2)
