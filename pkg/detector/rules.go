@@ -883,7 +883,7 @@ var userStopWords = map[string]bool{
 	"invalid": true, "unknown": true,
 	// systemd / cloud-init / k3s phrasing: "Waiting for processes to
 	// exit", "running as service", "for volume <name>", "as DNS".
-	"processes": true, "service": true, "device": true, "network": true,
+	"process": true, "processes": true, "service": true, "device": true, "network": true,
 	"domain": true, "local": true, "remote": true, "caches": true,
 	"cleanup": true, "current": true, "direct": true, "configured": true,
 	"base": true, "boot": true, "autoregister": true,

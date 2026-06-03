@@ -573,6 +573,7 @@ func TestValidUser_BalancedStopWords(t *testing.T) {
 	}{
 		{"invalid in sshd auth", "Failed password for invalid user test from 1.2.3.4 port 22", "invalid"},
 		{"processes in systemd-logind", "Session 1 logged out. Waiting for processes to exit.", "processes"},
+		{"process in mysqld startup", "/usr/sbin/mysqld (mysqld 8.0.45) starting as process 1346583", "process"},
 		{"caches in syslog", "Memory cgroup out of memory: reducing caches for service apache.", "caches"},
 		{"service noun", "running as service unit", "service"},
 		{"network as noun", "blocking traffic for network outage", "network"},
