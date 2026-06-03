@@ -989,29 +989,60 @@ func isAllUpperAlpha(s string) bool {
 	return true
 }
 
-// validCard accepts only digit strings that start with a known card-brand
-// prefix (Visa/MC/AmEx/Discover/Diners/JCB) and pass the Luhn checksum.
-// The brand-prefix gate keeps random Luhn-valid IDs (timestamps, hashes)
-// from masquerading as cards.
+// validCard accepts only digit strings that match a known card-brand
+// (prefix + length) and pass the Luhn checksum. The brand gate keeps
+// random Luhn-valid IDs (timestamps, hashes, IMEIs) from masquerading as
+// cards.
+//
+// Length matters because some lengths belong to exactly one brand, and a
+// loose "first digit is 3/4/5/6" gate lets 15-digit IMEIs (Luhn-valid,
+// often starting 35/49) through as fake AmEx. The brand matrix:
+//
+//	len 13      → Visa only            (prefix 4)
+//	len 15      → Amex only            (prefix 34 / 37)
+//	len 14      → Diners               (prefix 30 / 36 / 38)
+//	len 16/19   → Visa/MC/Discover/JCB (prefix 3/4/5/6)
+//	len 17/18   → no major brand; reject
 func validCard(s string) bool {
-	var first byte
+	var first, second byte
 	count := 0
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if c < '0' || c > '9' {
 			continue
 		}
-		if count == 0 {
+		switch count {
+		case 0:
 			first = c
+		case 1:
+			second = c
 		}
 		count++
 	}
 	if count < 13 || count > 19 {
 		return false
 	}
-	switch first {
-	case '3', '4', '5', '6':
-	default:
+	p2 := string([]byte{first, second})
+	switch count {
+	case 13: // Visa
+		if first != '4' {
+			return false
+		}
+	case 14: // Diners Club
+		if p2 != "30" && p2 != "36" && p2 != "38" {
+			return false
+		}
+	case 15: // American Express
+		if p2 != "34" && p2 != "37" {
+			return false
+		}
+	case 16, 19: // Visa / Mastercard / Discover / JCB
+		switch first {
+		case '3', '4', '5', '6':
+		default:
+			return false
+		}
+	default: // 17, 18 — no major brand uses these
 		return false
 	}
 	sum := 0
