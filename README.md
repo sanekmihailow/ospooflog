@@ -123,7 +123,7 @@ ospooflog -s session.json show
 | IP       | `10.23.41.5` (private), `203.0.113.5` (public)          | `192.168.0.1` / `77.0.0.1` (public → 77.0.0.0/8; well-known resolvers like `8.8.8.8` kept) |
 | IP6      | `fe80::1`                                               | `fd00::1`                                      |
 | MAC      | `aa:bb:cc:dd:ee:ff`                                     | `02:00:00:00:00:01` (locally-administered)     |
-| HOST     | `db-prod.internal`                                      | `myhost1.local`                                |
+| HOST     | `db-prod.internal` (corporate)                          | `myhost1.local`; cloud-provider internal DNS (`*.ec2.internal`, `*.compute.internal`, `*.c.<project>.internal`, `*.ru-central1.internal`, `google.internal`) is kept |
 | FQDN     | `api.example.com`, `host.xn--p1ai`                      | `service1.example.com` (full IANA TLD set)     |
 | USER     | `user=alice`, `Failed publickey for alice`              | `user1` (only the value swaps)                 |
 | PATH     | `/var/lib/postgresql/data`, `/sbin/auditctl`            | `/var/lib/myapp1/data`                         |
