@@ -693,11 +693,11 @@ func TestFQDN_RejectsSourceFileExtensions(t *testing.T) {
 }
 
 func TestFQDN_RejectsFileExtensionTLDs(t *testing.T) {
-	// .md / .pub / .pid / .new / .save / .prof / .work are registered
-	// gTLDs that overwhelmingly appear as filename extensions in logs
-	// (README.md, id_rsa.pub, nginx.pid, /etc/passwd.new, passwd.save,
-	// cpu.prof), not as actual hostnames. Blacklisted so they don't
-	// get FQDN-masked.
+	// .md / .pub / .pid / .new / .save / .prof / .work / .map / .cab are
+	// registered gTLDs that overwhelmingly appear as filename extensions
+	// in logs and config files (README.md, id_rsa.pub, nginx.pid,
+	// /etc/passwd.new, passwd.save, cpu.prof, bundle.js.map), not as
+	// actual hostnames. Blacklisted so they don't get FQDN-masked.
 	cases := []string{
 		"reading README.md for setup",
 		"checking ~/.ssh/id_rsa.pub authorized",
@@ -711,6 +711,9 @@ func TestFQDN_RejectsFileExtensionTLDs(t *testing.T) {
 		"profile dumped to cpu.prof in /tmp",
 		"go tool pprof heap.prof open",
 		"tmp build dir build.work cleaned",
+		"serving app.js.map sourcemap",
+		"GET /static/bundle.css.map 200",
+		"extracting update.cab archive",
 	}
 	for _, text := range cases {
 		matches := New(DefaultRules()).Find(text)
