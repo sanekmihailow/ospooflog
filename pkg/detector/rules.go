@@ -436,6 +436,20 @@ var (
 	// only httpd-family access logs produce. The leading [a-zA-Z0-9_] in the
 	// capture rejects the canonical "-" placeholder when no auth user is set.
 	reUserHTTPD = regexp.MustCompile(`(?m)^\S+\s+\S+\s+([a-zA-Z0-9_][a-zA-Z0-9._-]*)\s+\[\d{2}/[A-Z][a-z]{2}/\d{4}`)
+	// USER after the literal "user"/"role" keyword followed by a quoted
+	// identifier — postgres ('password authentication failed for user
+	// "bob"', 'role "readonly_user" does not exist'). The quotes make this
+	// unambiguous, so it runs in all modes. Without it the username leaks
+	// and the balanced "for <word>" rule grabs the noun "user" instead.
+	reUserRoleQuoted = regexp.MustCompile(`(?i)\b(?:user|role)\s+["']([a-zA-Z_][a-zA-Z0-9._-]{0,31})["']`)
+	// USER in "as user <name>" — the doubled "user" keyword after "as"
+	// marks the next token as the account name (journald 'connection ...
+	// as user app', 'running as user deploy'). Deliberately NOT "for user":
+	// sshd's "Failed password for user from <ip>" means the account *is*
+	// "user" and the following token is the next log field, so "for user
+	// <x>" would wrongly grab that field. Postgres's "for user "bob"" is
+	// quoted and handled by reUserRoleQuoted instead.
+	reUserAsKeyword = regexp.MustCompile(`(?i)\bas\s+user\s+["']?([a-zA-Z_][a-zA-Z0-9._-]{0,31})`)
 	// USER aggressive — also "as <name>" / "for <name>". Lots of false-positive
 	// risk ("as needed", "for example").
 	reUserAggressive = regexp.MustCompile(`(?i)\b(?:as|for)\s+([a-zA-Z][a-zA-Z0-9._-]{1,30})\b`)
@@ -935,6 +949,21 @@ func validPassword(s string) bool {
 	return true
 }
 
+// validUserLoose is validUser plus a rejection of the bare keywords
+// "user"/"role"/"username". The aggressive "as|for <word>" rule otherwise
+// captures the keyword itself out of "as user app" / "for user bob" when
+// the real name that follows is dropped (e.g. protected like "app") — the
+// keyword is never the account. The conservative / sshd rules keep using
+// validUser, so an account literally named "user" (user=user, "for user
+// user") is still masked through those explicit-context rules.
+func validUserLoose(s string) bool {
+	switch strings.ToLower(s) {
+	case "user", "role", "username":
+		return false
+	}
+	return validUser(s)
+}
+
 func validUser(s string) bool {
 	if userStopWords[strings.ToLower(s)] {
 		return false
@@ -1349,6 +1378,11 @@ func coreRules() []Rule {
 		// before tailRules' path rules so the username byte range is
 		// claimed first and the surrounding path stays intact.
 		{Kind: KindUser, Re: reUserHomePath, CaptureGroup: 1, Validate: validUser},
+		// "as user <name>" and quoted user/role "<name>" — run ahead of
+		// tailRules' reUserAggressive so the real account name is claimed
+		// before the bare "as <word>" rule can grab the keyword "user".
+		{Kind: KindUser, Re: reUserAsKeyword, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindUser, Re: reUserRoleQuoted, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
 		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},
@@ -1385,7 +1419,7 @@ func tailRules(host, user, path, port, b64 bool) []Rule {
 		Rule{Kind: KindUser, Re: reUserHTTPD, CaptureGroup: 1, Validate: validUser, BlockCaptureOnly: true},
 	)
 	if user {
-		r = append(r, Rule{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUser})
+		r = append(r, Rule{Kind: KindUser, Re: reUserAggressive, CaptureGroup: 1, Validate: validUserLoose})
 	}
 	r = append(r, Rule{Kind: KindPath, Re: rePathConservative, CaptureGroup: 1})
 	if path {

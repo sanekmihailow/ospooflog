@@ -624,6 +624,48 @@ func TestValidUser_BalancedStopWords(t *testing.T) {
 	}
 }
 
+func TestUser_KeywordIdentifier(t *testing.T) {
+	// postgres / journald put the real account name after a literal
+	// "user"/"role" keyword. Capture it (and not the keyword noun),
+	// without breaking sshd's "for user <next-field>" shape.
+	type want struct {
+		present []string // must be captured as USER
+		absent  []string // must NOT be captured as USER
+	}
+	cases := []struct {
+		text string
+		w    want
+	}{
+		// postgres quoted identifiers
+		{`password authentication failed for user "bob"`, want{[]string{"bob"}, []string{"user"}}},
+		{`role "readonly_user" does not exist`, want{[]string{"readonly_user"}, []string{"role"}}},
+		// journald / generic "as user <name>"
+		{`connection from 10.0.0.8 as user deploy`, want{[]string{"deploy"}, []string{"user"}}},
+		{`connect as user johndoe ok`, want{[]string{"johndoe"}, []string{"user"}}},
+		// sshd: "user" IS the account, "from" is the next field — must not
+		// flip to capturing "from", and must still mask the account "user".
+		{`Failed password for user from 1.2.3.4`, want{[]string{"user"}, []string{"from"}}},
+	}
+	for _, tc := range cases {
+		got := map[string]bool{}
+		for _, m := range New(BalancedRules()).Find(tc.text) {
+			if m.Kind == KindUser {
+				got[m.Value] = true
+			}
+		}
+		for _, v := range tc.w.present {
+			if !got[v] {
+				t.Errorf("%q: expected USER %q, got %v", tc.text, v, got)
+			}
+		}
+		for _, v := range tc.w.absent {
+			if got[v] {
+				t.Errorf("%q: %q should NOT be captured as USER", tc.text, v)
+			}
+		}
+	}
+}
+
 func TestProtectedValues_SudoLogFieldNames(t *testing.T) {
 	// reUserConservative reads "<word>:<value>" as a user assignment,
 	// which catches the "user :" separator in a sudo line like
