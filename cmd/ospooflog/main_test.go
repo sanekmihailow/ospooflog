@@ -99,6 +99,65 @@ Recommended steps:
 	}
 }
 
+// TestRoundTrip_PEMAndIPScope locks in two things the format sweep
+// verified by hand: a multi-line PEM private-key block round-trips
+// byte-for-byte (the body spans newlines, the trickiest replace shape),
+// and the public/private IP scope split plus well-known-resolver
+// preservation survive a full CLI obfuscate→restore.
+func TestRoundTrip_PEMAndIPScope(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "in.log")
+	safeFile := filepath.Join(dir, "safe.txt")
+	resultFile := filepath.Join(dir, "out.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	raw := `internal 10.0.0.8 external 203.0.113.5 resolver 8.8.8.8
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtz
+c2gtZWQyNTUxOQAAACDvuMQ3pAaKw9P7eq7Dn5Hd5e6Z4mZ5Z4mZ5Z4mZ5Z4g
+-----END OPENSSH PRIVATE KEY-----
+done
+`
+	if err := os.WriteFile(logFile, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "obfuscate"}); err != nil {
+		t.Fatalf("obfuscate failed: %v", err)
+	}
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	safeStr := string(safe)
+
+	// PEM body masked to a single token; private → 192.168/16, public →
+	// 77/8; well-known resolver 8.8.8.8 preserved.
+	for _, want := range []string{"FAKE_PRIVATE_KEY_", "192.168.0.", "77.0.0.", "8.8.8.8"} {
+		if !strings.Contains(safeStr, want) {
+			t.Errorf("safe output missing %q:\n%s", want, safeStr)
+		}
+	}
+	// The BEGIN/END markers are not secret and stay; the base64 key body
+	// is what must be gone.
+	for _, leaked := range []string{"10.0.0.8", "203.0.113.5", "b3BlbnNzaC1rZXktdjEA"} {
+		if strings.Contains(safeStr, leaked) {
+			t.Errorf("origin %q leaked:\n%s", leaked, safeStr)
+		}
+	}
+
+	// Round-trip restores the original byte-for-byte, multi-line key included.
+	if err := run([]string{"-i", safeFile, "-o", resultFile, "-s", sessionFile, "restore"}); err != nil {
+		t.Fatalf("restore failed: %v", err)
+	}
+	result, err := os.ReadFile(resultFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(result) != raw {
+		t.Errorf("round-trip not byte-exact:\n--- want ---\n%s\n--- got ---\n%s", raw, result)
+	}
+}
+
 func TestMode_BalancedEnablesAsAliceButNotSingleLabelHost(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "log.txt")
