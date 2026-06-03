@@ -22,7 +22,7 @@ func TestObfuscate_Basic(t *testing.T) {
 			t.Errorf("origin %q leaked into output: %q", leaked, out)
 		}
 	}
-	for _, want := range []string{"192.168.1.1:5432", "user1"} {
+	for _, want := range []string{"192.168.0.1:5432", "user1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in output, got %q", want, out)
 		}
@@ -65,7 +65,7 @@ func TestObfuscate_StableMappingAcrossCalls(t *testing.T) {
 	out1 := o.Obfuscate("ip=10.1.2.3")
 	out2 := o.Obfuscate("again ip=10.1.2.3")
 	// Same origin must map to same fake in both invocations.
-	if !strings.Contains(out1, "192.168.1.1") || !strings.Contains(out2, "192.168.1.1") {
+	if !strings.Contains(out1, "192.168.0.1") || !strings.Contains(out2, "192.168.0.1") {
 		t.Errorf("not stable: %q vs %q", out1, out2)
 	}
 }

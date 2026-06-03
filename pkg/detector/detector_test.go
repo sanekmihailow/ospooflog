@@ -1032,6 +1032,81 @@ func TestIP_RejectsInvalidOctets(t *testing.T) {
 	}
 }
 
+func TestIP_ScopeExtra(t *testing.T) {
+	// The IP rule tags each match with scope public/private so the
+	// replacer can pick 77/8 vs 192.168/16. RFC1918 → private, routable
+	// → public. ADDR carries the same tag derived from its IP half.
+	cases := []struct {
+		text  string
+		value string
+		scope string
+	}{
+		{"client 10.1.2.3 connected", "10.1.2.3", "private"},
+		{"client 192.168.5.5 connected", "192.168.5.5", "private"},
+		{"client 172.16.9.9 connected", "172.16.9.9", "private"},
+		{"client 203.0.113.7 connected", "203.0.113.7", "public"},
+		{"client 198.51.100.4 connected", "198.51.100.4", "public"},
+	}
+	for _, tc := range cases {
+		matches := New(DefaultRules()).Find(tc.text)
+		var found bool
+		for _, m := range matches {
+			if m.Kind == KindIP && m.Value == tc.value {
+				found = true
+				if got := m.Extra["scope"]; got != tc.scope {
+					t.Errorf("%s: scope=%q want %q", tc.value, got, tc.scope)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("IP %q not detected in %q", tc.value, tc.text)
+		}
+	}
+
+	// ADDR inherits scope from the IP half.
+	for _, m := range New(DefaultRules()).Find("upstream 198.51.100.4:443 down") {
+		if m.Kind == KindAddr && m.Extra["scope"] != "public" {
+			t.Errorf("ADDR public IP: scope=%q want public", m.Extra["scope"])
+		}
+	}
+}
+
+func TestIP_WellKnownPublicResolversPreserved(t *testing.T) {
+	// Public DNS / anycast resolver IPs are global constants, not PII —
+	// must pass through unmasked so the AI keeps the context.
+	preserved := []string{
+		"8.8.8.8", "8.8.4.4", "1.1.1.1", "1.0.0.1", "9.9.9.9",
+		"208.67.222.222", "4.2.2.2", "94.140.14.14", "77.88.8.8",
+		"2001:4860:4860::8888", "2606:4700:4700::1111", "2620:fe::fe",
+	}
+	for _, ip := range preserved {
+		text := "resolver configured as " + ip + " ok"
+		for _, m := range New(DefaultRules()).Find(text) {
+			if (m.Kind == KindIP || m.Kind == KindIP6) && m.Value == ip {
+				t.Errorf("well-known resolver %q was masked (kind=%s)", ip, m.Kind)
+			}
+		}
+	}
+
+	// A non-resolver public IP in the same shape must still be masked.
+	var masked bool
+	for _, m := range New(DefaultRules()).Find("resolver configured as 203.0.113.9 ok") {
+		if m.Kind == KindIP && m.Value == "203.0.113.9" {
+			masked = true
+		}
+	}
+	if !masked {
+		t.Error("ordinary public IP 203.0.113.9 should still be detected/masked")
+	}
+
+	// 8.8.8.8:53 (ADDR) inherits the preservation via validAddr→validIPv4.
+	for _, m := range New(DefaultRules()).Find("upstream 8.8.8.8:53 configured") {
+		if m.Kind == KindAddr {
+			t.Errorf("well-known resolver ADDR 8.8.8.8:53 was masked: %q", m.Value)
+		}
+	}
+}
+
 func TestCreditCard_LuhnAndBrand(t *testing.T) {
 	cases := []struct {
 		text string

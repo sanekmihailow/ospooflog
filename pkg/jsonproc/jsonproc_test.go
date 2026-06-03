@@ -25,7 +25,7 @@ func TestProcess_JSONLineObfuscatesStrings(t *testing.T) {
 	if !strings.Contains(out, `"user":"user1"`) {
 		t.Errorf("user value not obfuscated via key hint: %s", out)
 	}
-	if !strings.Contains(out, `"ip":"192.168.1.1"`) {
+	if !strings.Contains(out, `"ip":"192.168.0.1"`) {
 		t.Errorf("ip value not obfuscated: %s", out)
 	}
 	// Inside the free-form msg, the detector chain catches both the IP and
@@ -67,7 +67,7 @@ func TestProcess_NestedStructures(t *testing.T) {
 	if strings.Contains(out, "alice") || strings.Contains(out, "10.1.2.3") || strings.Contains(out, "10.4.5.6") {
 		t.Errorf("nested origins leaked: %s", out)
 	}
-	if !strings.Contains(out, "user1") || !strings.Contains(out, "192.168.1.1") || !strings.Contains(out, "192.168.1.2") {
+	if !strings.Contains(out, "user1") || !strings.Contains(out, "192.168.0.1") || !strings.Contains(out, "192.168.0.2") {
 		t.Errorf("nested replacements missing: %s", out)
 	}
 }

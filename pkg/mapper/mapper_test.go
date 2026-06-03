@@ -22,7 +22,7 @@ func TestObfuscate_CounterPerKind(t *testing.T) {
 	_, r1 := m.Obfuscate("10.1.2.3", detector.KindIP, nil)
 	_, r2 := m.Obfuscate("10.4.5.6", detector.KindIP, nil)
 	_, r3 := m.Obfuscate("alice", detector.KindUser, nil)
-	if r1 != "192.168.1.1" || r2 != "192.168.1.2" {
+	if r1 != "192.168.0.1" || r2 != "192.168.0.2" {
 		t.Errorf("ip counters: %q %q", r1, r2)
 	}
 	if r3 != "user1" {
@@ -53,10 +53,10 @@ func TestRestore(t *testing.T) {
 func TestLoad_ResumesCounters(t *testing.T) {
 	m := New(replacer.New())
 	m.Load([]Entry{
-		{Token: "IP_005", Kind: detector.KindIP, Origin: "1.1.1.1", Replace: "192.168.1.5"},
+		{Token: "IP_005", Kind: detector.KindIP, Origin: "1.1.1.1", Replace: "192.168.0.5"},
 	})
 	_, r := m.Obfuscate("2.2.2.2", detector.KindIP, nil)
-	if r != "192.168.1.6" {
+	if r != "192.168.0.6" {
 		t.Errorf("counter not resumed past loaded entries: got %q", r)
 	}
 }

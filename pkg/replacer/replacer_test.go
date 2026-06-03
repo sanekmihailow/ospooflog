@@ -15,10 +15,14 @@ func TestGenerate_Basic(t *testing.T) {
 		extra map[string]string
 		want  string
 	}{
-		{detector.KindIP, 1, nil, "192.168.1.1"},
-		{detector.KindIP, 7, nil, "192.168.1.7"},
-		{detector.KindAddr, 2, map[string]string{"port": "5432"}, "192.168.1.2:5432"},
-		{detector.KindAddr, 1, nil, "192.168.1.1:8080"}, // fallback port
+		{detector.KindIP, 1, nil, "192.168.0.1"}, // no scope → private default
+		{detector.KindIP, 7, nil, "192.168.0.7"},
+		{detector.KindIP, 300, nil, "192.168.1.44"},                            // private spreads past one octet, no overflow
+		{detector.KindIP, 1, map[string]string{"scope": "public"}, "77.0.0.1"}, // public → 77/8
+		{detector.KindIP, 258, map[string]string{"scope": "public"}, "77.0.1.2"}, // public spreads past one octet
+		{detector.KindAddr, 2, map[string]string{"port": "5432"}, "192.168.0.2:5432"},
+		{detector.KindAddr, 1, nil, "192.168.0.1:8080"}, // fallback port, private default
+		{detector.KindAddr, 1, map[string]string{"scope": "public", "port": "443"}, "77.0.0.1:443"},
 		{detector.KindHost, 3, nil, "myhost3.local"},
 		{detector.KindFQDN, 1, nil, "service1.example.com"},
 		{detector.KindUser, 1, nil, "user1"},
