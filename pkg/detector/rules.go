@@ -19,11 +19,11 @@ import (
 //
 // Layering with --overrides:
 //
-//   user --overrides         hides origins with NUL placeholders pre-detection
-//     ↓
-//   protectedValues (this)   drops Match post-validate if value is in set
-//     ↓
-//   detection rules          regular obfuscation
+//	user --overrides         hides origins with NUL placeholders pre-detection
+//	  ↓
+//	protectedValues (this)   drops Match post-validate if value is in set
+//	  ↓
+//	detection rules          regular obfuscation
 //
 // Overrides win because the override pre-pass runs before the detector
 // sees the text — the value has been rewritten to a placeholder and is
@@ -95,11 +95,11 @@ var protectedValues = map[string]bool{
 	"kube-apiserver": true,
 	"kubeadm":        true,
 	// K8s addons / control plane store / CNI plugins.
-	"etcd":     true,
-	"flannel":  true,
-	"calico":   true,
-	"cilium":   true,
-	"metallb":  true,
+	"etcd":    true,
+	"flannel": true,
+	"calico":  true,
+	"cilium":  true,
+	"metallb": true,
 	// Service mesh / discovery.
 	"istio":   true,
 	"linkerd": true,
@@ -142,17 +142,17 @@ var protectedValues = map[string]bool{
 	"smack":    true,
 	// Mail daemons + spam/sig filters that ride syslog with the same
 	// daemon-tag shape as postfix.
-	"postfix":       true,
-	"dovecot":       true,
-	"exim":          true,
-	"sendmail":      true,
-	"opendkim":      true,
-	"spamassassin":  true,
-	"amavis":        true,
+	"postfix":      true,
+	"dovecot":      true,
+	"exim":         true,
+	"sendmail":     true,
+	"opendkim":     true,
+	"spamassassin": true,
+	"amavis":       true,
 	// Time sync daemons.
-	"ntpd":       true,
-	"chronyd":    true,
-	"timesyncd":  true,
+	"ntpd":      true,
+	"chronyd":   true,
+	"timesyncd": true,
 	// VPN / IPsec.
 	"wireguard":  true,
 	"openvpn":    true,
@@ -197,20 +197,20 @@ var protectedValues = map[string]bool{
 	// Public software / OS vendor domains — masking these loses meaning
 	// for the AI (an "image is on serviceN.example.com" is useless;
 	// "image is on docker.io" is real context).
-	"docker.io":         true,
-	"kubernetes.io":     true,
-	"k8s.io":            true,
-	"k3s.io":            true,
-	"redhat.com":        true,
-	"ubuntu.com":        true,
-	"kernel.org":        true,
-	"launchpad.net":     true,
-	"cloudinit.net":     true,
-	"openssh.com":       true,
-	"libssh.org":        true,
-	"rsyslog.com":       true,
-	"cattle.io":         true,
-	"traefik.io":        true,
+	"docker.io":     true,
+	"kubernetes.io": true,
+	"k8s.io":        true,
+	"k3s.io":        true,
+	"redhat.com":    true,
+	"ubuntu.com":    true,
+	"kernel.org":    true,
+	"launchpad.net": true,
+	"cloudinit.net": true,
+	"openssh.com":   true,
+	"libssh.org":    true,
+	"rsyslog.com":   true,
+	"cattle.io":     true,
+	"traefik.io":    true,
 	// Code-hosting platforms.
 	"github.com":    true,
 	"gitlab.com":    true,
@@ -222,7 +222,29 @@ var protectedValues = map[string]bool{
 	"registry.k8s.io":   true,
 	"mcr.microsoft.com": true,
 	"public.ecr.aws":    true,
+	// Cloud-provider internal DNS suffixes. These are fixed per provider
+	// (not per tenant), so they carry topology context — "instance in
+	// ec2.internal" tells the AI it's AWS — without being PII. Only the
+	// narrow known suffixes are listed; bare ".internal" is NOT, because
+	// it collides with corporate internal hostnames (db-prod.internal,
+	// vault.internal) that genuinely should be masked. Exact + subdomain
+	// matching comes for free from protectedDomainSuffixes (both
+	// "ec2.internal" and "ip-10-0-0-1.ec2.internal" match). GCP's per-
+	// project "<vm>.c.<project>.internal" form is handled separately by
+	// reGCPInternalDNS since <project> is variable.
+	"ec2.internal":         true, // AWS us-east-1
+	"compute.internal":     true, // AWS other regions
+	"google.internal":      true, // GCP metadata
+	"ru-central1.internal": true, // Yandex Cloud
+	"ru-central1.computeinstancesgroup.internal": true, // Yandex Cloud
 }
+
+// reGCPInternalDNS matches GCP's per-project internal instance DNS,
+// "<instance>.c.<project>.internal" and "<instance>.<zone>.c.<project>.internal".
+// The <project> label is tenant-specific so it can't be a fixed
+// protectedValues entry, but the ".c.<project>.internal" shape is a stable
+// GCP convention worth preserving like the other cloud suffixes.
+var reGCPInternalDNS = regexp.MustCompile(`(?i)\.c\.[a-z0-9][a-z0-9-]*\.internal$`)
 
 // protectedDomainSuffixes is the slice form of protectedValues entries
 // that contain a dot — used by isProtectedValue to also match subdomains
@@ -338,6 +360,11 @@ func isProtectedValue(s string) bool {
 			return true
 		}
 	}
+	// GCP per-project instance DNS (<vm>.c.<project>.internal) — the
+	// project label is variable so it isn't a fixed protectedValues entry.
+	if reGCPInternalDNS.MatchString(low) {
+		return true
+	}
 	for _, d := range protectedSlugSuffixes {
 		if strings.HasSuffix(low, d) {
 			return true
@@ -375,13 +402,13 @@ func isProtectedValue(s string) bool {
 var reSystemdUserPAM = regexp.MustCompile(`\bsystemd-user:`)
 
 var (
-	reDSN   = regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?|amqps?|kafka)://[^\s"'<>\x60]+`)
+	reDSN = regexp.MustCompile(`\b(?:postgres(?:ql)?|mysql|redis|mongodb(?:\+srv)?|amqps?|kafka)://[^\s"'<>\x60]+`)
 	// AWS ARN: "arn:partition:service:region:account-id:resource". Region
 	// and account-id are blank for some services (S3, IAM). Resource may
 	// contain "/" or ":" separators. Captured greedily up to whitespace
 	// or quote. Group 1 is service, group 2 is region — picked up by
 	// arnExtra so the fake can preserve the service kind.
-	reARN = regexp.MustCompile(`\barn:aws[a-z0-9-]*:([a-z0-9-]+):([a-z0-9-]*):[0-9]{0,12}:[a-zA-Z0-9_/:.\-]+`)
+	reARN   = regexp.MustCompile(`\barn:aws[a-z0-9-]*:([a-z0-9-]+):([a-z0-9-]*):[0-9]{0,12}:[a-zA-Z0-9_/:.\-]+`)
 	reJWT   = regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{4,}\.eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\b`)
 	reUUID  = regexp.MustCompile(`\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b`)
 	reEmail = regexp.MustCompile(`\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+\b`)
@@ -404,7 +431,12 @@ var (
 	// formatted lines.
 	reHostSyslog = regexp.MustCompile(`(?m)^(?:\d{4}-\d{2}-\d{2}T[\d:.+\-Z]+|[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2})\s+([a-zA-Z][a-zA-Z0-9._-]+)\s+\S+`)
 	// HOST conservative — must end in a private/internal-looking suffix.
-	reHostConservative = regexp.MustCompile(`\b[a-zA-Z0-9][a-zA-Z0-9-]*\.(?:local|internal|lan|home)\b`)
+	// Captures the FULL dotted name (all leading labels), not just the
+	// last one before the suffix, so cloud per-tenant internal DNS like
+	// "vm1.zone.c.<project>.internal" reaches isProtectedValue intact for
+	// the cloud-metadata allowlist check, and a multi-label internal host
+	// is masked as a whole rather than leaving its left labels exposed.
+	reHostConservative = regexp.MustCompile(`\b(?:[a-zA-Z0-9][a-zA-Z0-9-]*\.)+(?:local|internal|lan|home)\b`)
 	// HOST aggressive — single-label hostname with a hyphen, only after a
 	// "host=" / "server=" / "node=" keyword. Without the keyword anchor this
 	// matches any random "well-known" or "non-empty".
