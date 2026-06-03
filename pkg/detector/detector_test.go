@@ -1162,12 +1162,25 @@ func TestCreditCard_LuhnAndBrand(t *testing.T) {
 		{"PAN 4111 1111 1111 1111 ok", []string{"4111 1111 1111 1111"}},
 		// AmEx test card, 15 digits, hyphenated 4-6-5
 		{"amex 3782-822463-10005 ok", []string{"3782-822463-10005"}},
+		// AmEx 15 digits, no separators (prefix 37)
+		{"amex 378282246310005 ok", []string{"378282246310005"}},
+		// Diners Club, 14 digits (prefix 30)
+		{"diners 30569309025904 ok", []string{"30569309025904"}},
+		// Visa, 13 digits (legacy)
+		{"visa 4222222222222 ok", []string{"4222222222222"}},
 		// Random 16 digits — Luhn invalid → not a match
 		{"id 1234567890123456 ok", nil},
 		// All zeros — passes Luhn but brand digit '0' rejected
 		{"id 0000000000000000 ok", nil},
 		// Brand digit '7' — rejected even if Luhn-valid (test case has bad Luhn anyway)
 		{"id 7111111111111111 ok", nil},
+		// IMEI: 15-digit Luhn-valid but not an Amex prefix (34/37) → reject.
+		// 15 digits belong to Amex only; a 49.../35... prefix is a device id.
+		{"IMEI 490154203237518 reported", nil},
+		{"imei=356938035643809 seen", nil},
+		// 15-digit Luhn-valid starting with a non-Amex 3x (JCB prefix is 16
+		// digits, so 15 here is not a card).
+		{"id 356938035643809 ok", nil},
 	}
 	for _, tc := range cases {
 		matches := New(DefaultRules()).Find(tc.text)
