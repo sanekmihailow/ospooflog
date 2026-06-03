@@ -791,11 +791,13 @@ var (
 // and ".mov" (archive / video extensions), ".bar" (the "foo.bar" idiom),
 // source-file extensions (".py", ".rb", ".go", ".sh"), DNS reverse
 // zones (".arpa"), Markdown/SSH-pubkey/PID/backup file extensions
-// (".md", ".pub", ".pid", ".new"), and pkg-manager/profiler/temp
+// (".md", ".pub", ".pid", ".new"), pkg-manager/profiler/temp
 // suffixes (".save" for rpmsave/passwd.save, ".prof" for Go pprof
-// dumps, ".work" for tmpdirs) — all shadow registered gTLDs but
-// dominantly appear as file paths in logs (README.md, id_rsa.pub,
-// nginx.pid, /etc/passwd.new, cpu.prof). Users can extend via
+// dumps, ".work" for tmpdirs), and build/archive artifacts (".map"
+// for JS/CSS sourcemaps like app.js.map, ".cab" for Windows cabinet
+// files) — all shadow registered gTLDs but dominantly appear as file
+// paths in logs and config files (README.md, id_rsa.pub, nginx.pid,
+// /etc/passwd.new, cpu.prof, bundle.js.map). Users can extend via
 // --overrides if a specific TLD is noisy in their logs.
 var validTLDs = func() map[string]bool {
 	m := make(map[string]bool, 1500)
@@ -805,7 +807,7 @@ var validTLDs = func() map[string]bool {
 			m[t] = true
 		}
 	}
-	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh", "arpa", "md", "pub", "pid", "new", "save", "prof", "work"} {
+	for _, t := range []string{"so", "zip", "mov", "bar", "py", "rb", "go", "sh", "arpa", "md", "pub", "pid", "new", "save", "prof", "work", "map", "cab"} {
 		delete(m, t)
 	}
 	// systemd unit-type extensions look like TLDs (.target was applied for
