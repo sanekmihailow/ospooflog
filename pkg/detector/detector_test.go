@@ -143,6 +143,42 @@ func TestHost_LocalInternalSuffix(t *testing.T) {
 	}
 }
 
+func TestHost_CloudInternalDNSPreserved(t *testing.T) {
+	// Known cloud-provider internal DNS suffixes carry topology context
+	// (which cloud) but aren't PII — preserve them. Bare ".internal"
+	// corporate hosts must still be masked.
+	preserved := []string{
+		"ip-10-0-0-5.ec2.internal",                     // AWS us-east-1
+		"ip-10-1-2-3.eu-west-1.compute.internal",       // AWS other regions
+		"metadata.google.internal",                     // GCP metadata
+		"vm1.c.my-project-123.internal",                // GCP per-project (legacy)
+		"vm2.europe-west1-b.c.my-project-123.internal", // GCP per-project (zonal)
+		"host.ru-central1.internal",                    // Yandex Cloud
+	}
+	for _, h := range preserved {
+		text := "connect to " + h + " now"
+		for _, m := range New(DefaultRules()).Find(text) {
+			if m.Kind == KindHost && strings.Contains(h, m.Value) {
+				t.Errorf("cloud-internal host %q was masked (captured %q)", h, m.Value)
+			}
+		}
+	}
+
+	masked := []string{"db-prod.internal", "sub.vault.internal"}
+	for _, h := range masked {
+		text := "connect to " + h + " now"
+		var got bool
+		for _, m := range New(DefaultRules()).Find(text) {
+			if m.Kind == KindHost && m.Value == h {
+				got = true
+			}
+		}
+		if !got {
+			t.Errorf("corporate internal host %q should be masked, was not", h)
+		}
+	}
+}
+
 func TestFQDN_IANATLDsAndBlacklist(t *testing.T) {
 	cases := []struct {
 		text string
@@ -362,7 +398,7 @@ func TestEmail_RejectsSystemdUnitInstances(t *testing.T) {
 
 func TestProtectedValues_LeftAlone(t *testing.T) {
 	cases := []struct {
-		text    string
+		text     string
 		preserve string // substring that must remain in the output
 	}{
 		{"host=localhost connected", "localhost"},
@@ -790,7 +826,7 @@ func TestFQDN_PreservesPublicDomainsAndSubdomains(t *testing.T) {
 	// Public software / OS / registry domains in protectedValues, plus
 	// their subdomains via the "*.<domain>" suffix matcher.
 	cases := []struct {
-		text string
+		text     string
 		preserve string
 	}{
 		{"image pulled from docker.io/library/nginx", "docker.io"},
@@ -817,7 +853,7 @@ func TestEmail_RejectsGoModulePathsAndKernelCreditDomains(t *testing.T) {
 	// that isn't .com / .org / etc. is rejected. dm-devel@redhat.com is
 	// preserved via the domain-half check in isProtectedValue.
 	cases := []struct {
-		text string
+		text        string
 		expectEmail bool
 	}{
 		{`reflector="k8s.io/client-go@v1.33.6-k3s1/tools/cache/reflector.go:285"`, false},
@@ -843,7 +879,7 @@ func TestPassword_RejectsSudoPWDPath(t *testing.T) {
 	// "PWD=/home/system" in sudo logs is the present working directory,
 	// not a password. validPassword rejects values starting with /.
 	cases := []struct {
-		text string
+		text      string
 		expectPwd bool
 	}{
 		{"sudo: PWD=/home/system ; USER=root", false},
@@ -994,9 +1030,9 @@ func TestIP6_RejectsShortFormFromTextSeparator(t *testing.T) {
 	// logs. validIPv6's 4-hex-digit floor drops them while preserving
 	// legitimate fe80::* / 2001::* / fd00::* shapes.
 	cases := []struct {
-		text  string
-		bad   string
-		good  []string
+		text string
+		bad  string
+		good []string
 	}{
 		{
 			text: `name="client-ca-bundle::/var/lib/rancher/k3s/server/tls/client-ca.crt"`,
