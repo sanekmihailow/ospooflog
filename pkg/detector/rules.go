@@ -222,6 +222,19 @@ var protectedValues = map[string]bool{
 	"registry.k8s.io":   true,
 	"mcr.microsoft.com": true,
 	"public.ecr.aws":    true,
+	// Public cloud service endpoints — fixed provider domains, not PII.
+	// Subdomain match covers s3.amazonaws.com, ec2.eu-west-1.amazonaws.com,
+	// storage.googleapis.com, myacct.blob.core.windows.net, etc. Masking
+	// these to serviceN.example.com strips the "call to S3 / GCS / Azure
+	// Blob failed" signal the AI needs.
+	"amazonaws.com":          true, // AWS (s3, ec2, sqs, …)
+	"cloudfront.net":         true, // AWS CloudFront
+	"googleapis.com":         true, // GCP APIs (storage, compute, …)
+	"google.com":             true, // GCP / Google endpoints
+	"windows.net":            true, // Azure (blob.core.windows.net, …)
+	"azure.com":              true, // Azure
+	"microsoftonline.com":    true, // Azure AD / Entra ID
+	"digitaloceanspaces.com": true, // DigitalOcean Spaces
 	// Cloud-provider internal DNS suffixes. These are fixed per provider
 	// (not per tenant), so they carry topology context — "instance in
 	// ec2.internal" tells the AI it's AWS — without being PII. Only the
@@ -1158,12 +1171,12 @@ func addrExtra(sub []string) map[string]string {
 	return map[string]string{"ip": sub[1], "port": sub[2], "scope": ipScope(sub[1])}
 }
 
-// wellKnownPublicIPs are public DNS / anycast resolver addresses that are
-// global constants, not PII — same reasoning as the protectedValues domain
-// allowlist (docker.io, github.com). Masking "8.8.8.8" to a fake just
-// strips context the AI needs ("query to Google DNS failed" is signal).
-// Keys are canonical net.IP.String() form so textual IPv6 variants match.
-var wellKnownPublicIPs = map[string]bool{
+// wellKnownIPs are addresses that are infrastructure constants, not PII —
+// same reasoning as the protectedValues domain allowlist (docker.io,
+// github.com). Masking "8.8.8.8" to a fake just strips context the AI
+// needs ("query to Google DNS failed" is signal). Keys are canonical
+// net.IP.String() form so textual IPv6 variants match.
+var wellKnownIPs = map[string]bool{
 	// Google Public DNS
 	"8.8.8.8": true, "8.8.4.4": true,
 	// Cloudflare (1.1.1.1, plus family/malware-blocking variants)
@@ -1182,6 +1195,16 @@ var wellKnownPublicIPs = map[string]bool{
 	"2001:4860:4860::8888": true, "2001:4860:4860::8844": true, // Google
 	"2606:4700:4700::1111": true, "2606:4700:4700::1001": true, // Cloudflare
 	"2620:fe::fe": true, "2620:fe::9": true, // Quad9
+	// Kubernetes default service-CIDR anchors. These are private-range
+	// IPs but fixed by convention (not tenant-specific): the API server is
+	// always .0.1 and CoreDNS/kube-dns .0.10 of the service CIDR. Only the
+	// stock kubeadm (10.96.0.0/12) and k3s (10.43.0.0/16) defaults are
+	// listed; a cluster with a custom service-CIDR won't match, which is
+	// fine — those addresses are then genuinely site-specific and masking
+	// them is correct. Masking the default API/DNS IPs only strips the
+	// "pod talking to the API server" context.
+	"10.96.0.1": true, "10.96.0.10": true, // kubeadm default
+	"10.43.0.1": true, "10.43.0.10": true, // k3s default
 }
 
 func validIPv4(s string) bool {
@@ -1195,7 +1218,7 @@ func validIPv4(s string) bool {
 	if ip.IsUnspecified() || ip.IsLoopback() {
 		return false
 	}
-	if wellKnownPublicIPs[ip.String()] {
+	if wellKnownIPs[ip.String()] {
 		return false
 	}
 	if v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255 {
@@ -1221,7 +1244,7 @@ func validIPv6(s string) bool {
 	if ip.IsUnspecified() || ip.IsLoopback() {
 		return false
 	}
-	if wellKnownPublicIPs[ip.String()] {
+	if wellKnownIPs[ip.String()] {
 		return false
 	}
 	// Ultra-short forms like "e::", "ca::", "1::1" are technically valid

@@ -1214,6 +1214,56 @@ func TestIP_WellKnownPublicResolversPreserved(t *testing.T) {
 	}
 }
 
+func TestIP_K8sServiceIPsPreserved(t *testing.T) {
+	// Default kubeadm/k3s service-CIDR anchors (API server .0.1, DNS .0.10)
+	// are fixed by convention, not tenant-specific — kept like resolvers.
+	for _, ip := range []string{"10.96.0.1", "10.96.0.10", "10.43.0.1", "10.43.0.10"} {
+		for _, m := range New(DefaultRules()).Find("pod dialed " + ip + " ok") {
+			if m.Kind == KindIP && m.Value == ip {
+				t.Errorf("k8s service IP %q was masked", ip)
+			}
+		}
+	}
+	// An ordinary address in the same 10/8 block must still be masked.
+	var masked bool
+	for _, m := range New(DefaultRules()).Find("backend at 10.96.5.5 ok") {
+		if m.Kind == KindIP && m.Value == "10.96.5.5" {
+			masked = true
+		}
+	}
+	if !masked {
+		t.Error("ordinary 10.96.5.5 should still be masked (only the .0.1/.0.10 anchors are preserved)")
+	}
+}
+
+func TestFQDN_CloudServiceDomainsPreserved(t *testing.T) {
+	// Public cloud service endpoints are fixed provider domains, not PII —
+	// preserved like docker.io / github.com.
+	preserved := []string{
+		"s3.amazonaws.com", "ec2.eu-west-1.amazonaws.com",
+		"storage.googleapis.com", "acct.blob.core.windows.net",
+		"d111111abcdef8.cloudfront.net", "login.microsoftonline.com",
+	}
+	for _, d := range preserved {
+		text := "request to " + d + " failed"
+		for _, m := range New(DefaultRules()).Find(text) {
+			if m.Kind == KindFQDN && m.Value == d {
+				t.Errorf("cloud service domain %q was masked", d)
+			}
+		}
+	}
+	// A tenant-looking FQDN that isn't a cloud-service domain still masks.
+	var masked bool
+	for _, m := range New(DefaultRules()).Find("request to api.acmecorp.com failed") {
+		if m.Kind == KindFQDN && m.Value == "api.acmecorp.com" {
+			masked = true
+		}
+	}
+	if !masked {
+		t.Error("api.acmecorp.com should still be masked")
+	}
+}
+
 func TestCreditCard_LuhnAndBrand(t *testing.T) {
 	cases := []struct {
 		text string
