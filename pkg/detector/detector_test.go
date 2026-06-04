@@ -719,6 +719,8 @@ func TestUser_KeywordIdentifier(t *testing.T) {
 		// journald / generic "as user <name>"
 		{`connection from 10.0.0.8 as user deploy`, want{[]string{"deploy"}, []string{"user"}}},
 		{`connect as user johndoe ok`, want{[]string{"johndoe"}, []string{"user"}}},
+		// MongoDB "authenticated as principal <name> on <db>"
+		{`Successfully authenticated as principal admin on admin`, want{[]string{"admin"}, []string{"principal"}}},
 		// sshd: "user" IS the account, "from" is the next field — must not
 		// flip to capturing "from", and must still mask the account "user".
 		{`Failed password for user from 1.2.3.4`, want{[]string{"user"}, []string{"from"}}},

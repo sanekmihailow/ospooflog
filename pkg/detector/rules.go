@@ -503,7 +503,9 @@ var (
 	// "user" and the following token is the next log field, so "for user
 	// <x>" would wrongly grab that field. Postgres's "for user "bob"" is
 	// quoted and handled by reUserRoleQuoted instead.
-	reUserAsKeyword = regexp.MustCompile(`(?i)\bas\s+user\s+["']?([a-zA-Z_][a-zA-Z0-9._-]{0,31})`)
+	// "as principal <name>" (MongoDB "authenticated as principal admin")
+	// is the same shape — handled alongside "user".
+	reUserAsKeyword = regexp.MustCompile(`(?i)\bas\s+(?:user|principal)\s+["']?([a-zA-Z_][a-zA-Z0-9._-]{0,31})`)
 	// USER aggressive — also "as <name>" / "for <name>". Lots of false-positive
 	// risk ("as needed", "for example").
 	reUserAggressive = regexp.MustCompile(`(?i)\b(?:as|for)\s+([a-zA-Z][a-zA-Z0-9._-]{1,30})\b`)
@@ -1022,7 +1024,7 @@ func validPassword(s string) bool {
 // user") is still masked through those explicit-context rules.
 func validUserLoose(s string) bool {
 	switch strings.ToLower(s) {
-	case "user", "role", "username":
+	case "user", "role", "username", "principal":
 		return false
 	}
 	return validUser(s)
