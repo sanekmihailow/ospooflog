@@ -1149,6 +1149,35 @@ func TestIP_ScopeExtra(t *testing.T) {
 	}
 }
 
+func TestIP6_ScopeExtra(t *testing.T) {
+	// IPv6 mirrors IPv4: global unicast → public (2001:db8::/32 fake),
+	// ULA fc00::/7 and link-local fe80::/10 → private (fd00:: fake).
+	cases := []struct {
+		text  string
+		value string
+		scope string
+	}{
+		{"peer 2a00:1450:4001:81b::200e up", "2a00:1450:4001:81b::200e", "public"},
+		{"peer 2606:2800:220:1:248:1893:25c8:1946 up", "2606:2800:220:1:248:1893:25c8:1946", "public"},
+		{"link fe80::1 up", "fe80::1", "private"},
+		{"ula fd12:3456:789a::1 up", "fd12:3456:789a::1", "private"},
+	}
+	for _, tc := range cases {
+		var found bool
+		for _, m := range New(DefaultRules()).Find(tc.text) {
+			if m.Kind == KindIP6 && m.Value == tc.value {
+				found = true
+				if got := m.Extra["scope"]; got != tc.scope {
+					t.Errorf("%s: scope=%q want %q", tc.value, got, tc.scope)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("IPv6 %q not detected in %q", tc.value, tc.text)
+		}
+	}
+}
+
 func TestIP_WellKnownPublicResolversPreserved(t *testing.T) {
 	// Public DNS / anycast resolver IPs are global constants, not PII —
 	// must pass through unmasked so the AI keeps the context.

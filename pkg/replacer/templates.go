@@ -35,7 +35,14 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 	detector.KindIP: func(n int, extra map[string]string) string {
 		return fakeIP(n, extra)
 	},
-	detector.KindIP6: func(n int, _ map[string]string) string {
+	detector.KindIP6: func(n int, extra map[string]string) string {
+		// Mirror the IPv4 scope split: global-unicast origins → the
+		// RFC 3849 documentation prefix 2001:db8::/32 (non-routable, the
+		// universally-recognised "example" IPv6 — capacity is a non-issue
+		// at /32), private/link-local/unset → ULA fd00::.
+		if extra["scope"] == "public" {
+			return fmt.Sprintf("2001:db8::%x", n)
+		}
 		return fmt.Sprintf("fd00::%x", n)
 	},
 	detector.KindMAC: func(n int, _ map[string]string) string {
