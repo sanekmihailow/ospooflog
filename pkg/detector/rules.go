@@ -606,11 +606,21 @@ var (
 	reOpenAIKey = regexp.MustCompile(`\bsk-(?:(?:proj|svcacct|admin)-(?:[A-Za-z0-9_-]{74}|[A-Za-z0-9_-]{58})T3BlbkFJ(?:[A-Za-z0-9_-]{74}|[A-Za-z0-9_-]{58})|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})\b`)
 	// Google API key (Maps, Firebase, GCP): "AIza" + 35 chars.
 	reGoogleAPIKey = regexp.MustCompile(`\bAIza[A-Za-z0-9_\-]{35}\b`)
+	// Google OAuth 2.0 access token — "ya29." + a long opaque body. The
+	// "ya29." prefix is unmistakable; the 50-char floor avoids snagging a
+	// bare "ya29." mention.
+	reGoogleOAuthToken = regexp.MustCompile(`\bya29\.[A-Za-z0-9_\-]{50,}`)
 	// Stripe secret / restricted keys. Publishable "pk_" keys are public
 	// by design and don't need masking.
 	reStripeKey = regexp.MustCompile(`\b(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{10,99}\b`)
-	// GitLab personal / project / group access tokens.
-	reGitLabToken = regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20}\b`)
+	// GitLab tokens: personal (glpat), runner (glrt), deploy (gldt),
+	// scoped/OAuth (glsoat), pipeline-trigger (glptt), cluster-agent
+	// (glagent), feed (glfeed), incoming-mail (glimt), CI/CD-build (glcbt).
+	reGitLabToken = regexp.MustCompile(`\bgl(?:pat|rt|dt|soat|ptt|agent|feed|imt|cbt)-[A-Za-z0-9_\-]{20,}\b`)
+	// Docker Hub personal access token — "dckr_pat_" + 27+ base64url.
+	reDockerHubPAT = regexp.MustCompile(`\bdckr_pat_[A-Za-z0-9_\-]{20,}\b`)
+	// Figma personal access token — "figd_" + 40+ base64url.
+	reFigmaToken = regexp.MustCompile(`\bfigd_[A-Za-z0-9_\-]{40,}\b`)
 	// npm access token — "npm_" + 36 hex chars. Real automation/publish
 	// tokens are hex-only; mixed-case tokens are legacy and rarely seen now.
 	reNpmToken = regexp.MustCompile(`\bnpm_[a-f0-9]{36}\b`)
@@ -1414,11 +1424,14 @@ func coreRules() []Rule {
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
 		{Kind: KindAPIKey, Re: reGitHubFineGrainedPAT, Keyword: "github_pat_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "glpat-"},
+		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "gl"},
 		{Kind: KindAPIKey, Re: reSlackToken, Keyword: "xox"},
 		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
 		{Kind: KindAPIKey, Re: reOpenAIKey, Keyword: "T3BlbkFJ"},
 		{Kind: KindAPIKey, Re: reGoogleAPIKey, Keyword: "AIza"},
+		{Kind: KindAPIKey, Re: reGoogleOAuthToken, Keyword: "ya29."},
+		{Kind: KindAPIKey, Re: reDockerHubPAT, Keyword: "dckr_pat_"},
+		{Kind: KindAPIKey, Re: reFigmaToken, Keyword: "figd_"},
 		{Kind: KindAPIKey, Re: reNpmToken, Keyword: "npm_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reHFToken, Keyword: "hf_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reDatabricksToken, Keyword: "dapi", MinEntropy: 3.0},
