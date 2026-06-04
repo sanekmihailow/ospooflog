@@ -1536,6 +1536,12 @@ func TestAPIKey_NewProviderTokens(t *testing.T) {
 		{"gcp-project-cli-eq", "--project=my-test-project-12345"},
 		{"gcp-project-cli-space", "--project my-test-project-12345"},
 		{"gcp-sa-client-id", `"client_id": "123456789012345678901"`},
+		{"google-oauth", "ya29." + alphanumN(60)},
+		{"docker-hub-pat", "dckr_pat_" + alphanumN(27)},
+		{"figma", "figd_" + alphanumN(40)},
+		{"gitlab-pat", "glpat-" + alphanumN(20)},
+		{"gitlab-runner", "glrt-" + alphanumN(30)},
+		{"gitlab-deploy", "gldt-" + alphanumN(30)},
 	}
 	for _, tc := range cases {
 		matches := New(DefaultRules()).Find(tc.text)
