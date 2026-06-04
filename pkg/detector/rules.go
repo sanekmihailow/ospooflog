@@ -465,9 +465,18 @@ var (
 	rePort = regexp.MustCompile(`(?:^|[^a-zA-Z0-9_.\-])(:\d{2,5})\b`)
 
 	// USER conservative — explicit "user=" / "login=" / "username:" / "acct="
-	// context. "acct" picks up auditd / PAM records like acct="root". The
-	// optional quote after "=" lets the capture cross past quoted values.
-	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name)?|login|acct)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
+	// context. "acct" picks up auditd / PAM records like acct="root";
+	// "account name" picks up the Windows Event Log field ("Account Name:
+	// jsmith"). The optional quote after "=" lets the capture cross past
+	// quoted values.
+	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name)?|login|acct|account\s+name)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
+	// Windows security identifier for a domain/local account: the
+	// security_nt_non_unique authority (S-1-5-21) followed by the 3-part
+	// domain identifier and the account RID. Uniquely identifies a
+	// principal, so it's PII. Well-known/builtin SIDs (S-1-5-18,
+	// S-1-5-32-544, S-1-1-0) don't have this shape and are left alone —
+	// they're constants, not identities.
+	reSID = regexp.MustCompile(`\bS-1-5-21(?:-\d{1,10}){4}\b`)
 	// USER in sshd login messages. Default mode misses these without a
 	// dedicated rule because they use space-separated verbs, not "user="
 	// syntax. Covers the standard openssh vocabulary:
@@ -1485,6 +1494,7 @@ func coreRules() []Rule {
 		// before the bare "as <word>" rule can grab the keyword "user".
 		{Kind: KindUser, Re: reUserAsKeyword, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUser, Re: reUserRoleQuoted, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindSID, Re: reSID, Keyword: "S-1-5-21"},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
 		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},

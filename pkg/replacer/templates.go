@@ -110,6 +110,11 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 		// use, so a fake here can never collide with a real subscriber.
 		return fmt.Sprintf("+15555550%03d", n%1000)
 	},
+	detector.KindSID: func(n int, _ map[string]string) string {
+		// Same S-1-5-21-<domain>-<rid> shape with a zeroed domain identifier
+		// so it's obviously synthetic; the counter varies the RID.
+		return fmt.Sprintf("S-1-5-21-0-0-0-%d", n)
+	},
 	detector.KindCard: func(n int, _ map[string]string) string {
 		// 4000-series is reserved for Visa test cards. The base "4000 0000
 		// 0000 0000" passes Luhn; we vary the last four digits with the

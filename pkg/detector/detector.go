@@ -53,6 +53,9 @@ const (
 	// KindPhone covers phone numbers in E.164 form and keyword-anchored
 	// shapes ("phone: 555-1234").
 	KindPhone EntityKind = "PHONE"
+	// KindSID covers Windows security identifiers for domain/local accounts
+	// (S-1-5-21-<domain>-<rid>) — uniquely identifies a principal.
+	KindSID EntityKind = "SID"
 	// KindOverride tags pairs from --overrides applied as literal sed-style
 	// substitutions, independent of any detector rule.
 	KindOverride EntityKind = "OVR"
