@@ -52,6 +52,25 @@ func TestAddr_BeatsBareIP(t *testing.T) {
 	}
 }
 
+func TestUser_ConnectionStringUserId(t *testing.T) {
+	// ADO.NET / JDBC connection-string field "User Id=" / "UserID=".
+	for _, tc := range []struct{ text, want string }{
+		{"Server=db;User Id=sa;Password=x", "sa"},
+		{"UserID=dbadmin;Password=y", "dbadmin"},
+	} {
+		var got string
+		for _, m := range New(DefaultRules()).Find(tc.text) {
+			if m.Kind == KindUser {
+				got = m.Value
+				break
+			}
+		}
+		if got != tc.want {
+			t.Errorf("text=%q: want user %q, got %q", tc.text, tc.want, got)
+		}
+	}
+}
+
 func TestUser_OnlyInExplicitContext(t *testing.T) {
 	text := "user=alice and login: bob and somewhere alice appears bare"
 	matches := New(DefaultRules()).Find(text)

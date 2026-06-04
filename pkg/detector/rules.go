@@ -467,9 +467,10 @@ var (
 	// USER conservative — explicit "user=" / "login=" / "username:" / "acct="
 	// context. "acct" picks up auditd / PAM records like acct="root";
 	// "account name" picks up the Windows Event Log field ("Account Name:
-	// jsmith"). The optional quote after "=" lets the capture cross past
-	// quoted values.
-	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name)?|login|acct|account\s+name)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
+	// jsmith"); "user id" picks up the ADO.NET / JDBC connection-string
+	// field ("User Id=sa", "UserID=sa"). The optional quote after "=" lets
+	// the capture cross past quoted values.
+	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name|\s*id)?|login|acct|account\s+name)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
 	// Windows security identifier for a domain/local account: the
 	// security_nt_non_unique authority (S-1-5-21) followed by the 3-part
 	// domain identifier and the account RID. Uniquely identifies a
