@@ -121,7 +121,7 @@ ospooflog -s session.json show
 | EMAIL    | `alice@corp.com`                                        | `user1@example.com`                            |
 | ADDR     | `10.23.41.5:5432`                                       | `192.168.0.1:5432` (port preserved)            |
 | IP       | `10.23.41.5` (private), `203.0.113.5` (public)          | `192.168.0.1` / `77.0.0.1` (public → 77.0.0.0/8; well-known resolvers like `8.8.8.8` kept) |
-| IP6      | `fe80::1`                                               | `fd00::1`                                      |
+| IP6      | `fe80::1` (link-local/ULA), `2a00:1450::1` (global)     | `fd00::1` / `2001:db8::1` (global → RFC 3849 doc prefix; well-known resolvers like `2001:4860:4860::8888` kept) |
 | MAC      | `aa:bb:cc:dd:ee:ff`                                     | `02:00:00:00:00:01` (locally-administered)     |
 | HOST     | `db-prod.internal` (corporate)                          | `myhost1.local`; cloud-provider internal DNS (`*.ec2.internal`, `*.compute.internal`, `*.c.<project>.internal`, `*.ru-central1.internal`, `google.internal`) is kept |
 | FQDN     | `api.example.com`, `host.xn--p1ai`                      | `service1.example.com` (full IANA TLD set)     |

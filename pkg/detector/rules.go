@@ -1128,7 +1128,17 @@ func validSyslogHost(s string) bool {
 // masking (an external attacker IP shouldn't render in the same
 // 192.168.x space as an internal host).
 func ipScope(s string) string {
-	if ip := net.ParseIP(s); ip != nil && ip.IsPrivate() {
+	// Strip a "%zone" suffix (fe80::1%eth0) so net.ParseIP succeeds.
+	if i := strings.IndexByte(s, '%'); i >= 0 {
+		s = s[:i]
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return "public"
+	}
+	// RFC1918 / ULA (IsPrivate) plus IPv6 link-local, which IsPrivate
+	// does not cover but is just as non-routable / internal.
+	if ip.IsPrivate() || ip.IsLinkLocalUnicast() {
 		return "private"
 	}
 	return "public"
@@ -1136,6 +1146,12 @@ func ipScope(s string) string {
 
 func ipExtra(sub []string) map[string]string {
 	return map[string]string{"scope": ipScope(sub[0])}
+}
+
+// ip6Extra reads the captured IPv6 from group 1 (reIP6 anchors with a
+// boundary char in group 0).
+func ip6Extra(sub []string) map[string]string {
+	return map[string]string{"scope": ipScope(sub[1])}
 }
 
 func addrExtra(sub []string) map[string]string {
@@ -1454,7 +1470,7 @@ func coreRules() []Rule {
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindMAC, Re: reMAC},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4, ExtraFn: ipExtra},
-		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
+		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6, ExtraFn: ip6Extra},
 	}
 }
 
