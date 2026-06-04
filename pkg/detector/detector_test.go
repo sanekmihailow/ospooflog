@@ -327,6 +327,47 @@ func TestUser_SSHDLoginPatterns(t *testing.T) {
 	}
 }
 
+func TestUser_WindowsAccountName(t *testing.T) {
+	// Windows Event Log "Account Name: <user>" field.
+	for _, tc := range []struct{ text, want string }{
+		{"Account Name: jsmith Account Domain: CORP", "jsmith"},
+		{"Account Name:\tadministrator", "administrator"},
+	} {
+		var got string
+		for _, m := range New(DefaultRules()).Find(tc.text) {
+			if m.Kind == KindUser {
+				got = m.Value
+				break
+			}
+		}
+		if got != tc.want {
+			t.Errorf("text=%q: want user %q, got %q", tc.text, tc.want, got)
+		}
+	}
+}
+
+func TestSID_WindowsAccountIdentifier(t *testing.T) {
+	// Domain/local account SID (S-1-5-21-<domain>-<rid>) → masked.
+	text := "Security ID: S-1-5-21-3623811015-3361044348-30300820-1013 logged on"
+	var got string
+	for _, m := range New(DefaultRules()).Find(text) {
+		if m.Kind == KindSID {
+			got = m.Value
+		}
+	}
+	if got != "S-1-5-21-3623811015-3361044348-30300820-1013" {
+		t.Errorf("domain SID not captured, got %q", got)
+	}
+	// Well-known / builtin SIDs are constants, not identities — left alone.
+	for _, wk := range []string{"S-1-5-18", "S-1-5-32-544", "S-1-1-0", "S-1-5-19"} {
+		for _, m := range New(DefaultRules()).Find("token owner " + wk + " present") {
+			if m.Kind == KindSID {
+				t.Errorf("well-known SID %q should not be masked, got %q", wk, m.Value)
+			}
+		}
+	}
+}
+
 func TestSecretAssign_GenericNames(t *testing.T) {
 	cases := []struct {
 		text string
