@@ -118,6 +118,7 @@ ospooflog -s session.json show
 | CARD     | `4111-1111-1111-1111` (Luhn-validated)                  | `4000-0000-0000-0010` (Luhn-valid Visa test)   |
 | PHONE    | `+14155552671`, `phone: 415-555-2671`                   | `+15555550001` (NANP fictional range)          |
 | UUID     | `550e8400-e29b-41d4-a716-446655440000`                  | `00000000-0000-0000-0000-000000000001`         |
+| SID      | `S-1-5-21-3623811015-3361044348-30300820-1013`          | `S-1-5-21-0-0-0-1` (well-known SIDs like `S-1-5-18` kept) |
 | EMAIL    | `alice@corp.com`                                        | `user1@example.com`                            |
 | ADDR     | `10.23.41.5:5432`                                       | `192.168.0.1:5432` (port preserved)            |
 | IP       | `10.23.41.5` (private), `203.0.113.5` (public)          | `192.168.0.1` / `77.0.0.1` (public → 77.0.0.0/8; well-known resolvers like `8.8.8.8` kept) |
