@@ -44,24 +44,24 @@ func sessionPath(flag string) string {
 }
 
 type opts struct {
-	Input         string `short:"i" long:"input" description:"input file (default: stdin)"`
-	Output        string `short:"o" long:"output" description:"output file (default: stdout)"`
-	Session       string `short:"s" long:"session" description:"session file (default: /tmp/ospooflog_session.json)"`
-	Mode          string `long:"mode" description:"detection breadth — safe: strict context only | balanced: + 'as alice' / abs paths / bare ports | aggressive: + single-label HOST / base64 decode-verify" default:"safe"`
-	Aggressive    bool   `long:"aggressive" description:"deprecated alias for --mode aggressive"`
-	FastRestore   bool   `long:"fast-restore" description:"opt out of word-boundary aware restore — faster, but a registered fake that's a prefix of an unrelated string in the AI response will be wrongly replaced"`
-	StrictRestore bool   `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
-	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
-	Diff          bool   `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
-	Overrides     string `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
-	Ignore        string `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
-	Cut           string `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
-	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
-	AllowKeys     string `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
-	Dbg           bool   `long:"dbg" description:"debug logging on stderr (session load count, match dumps in dry-run)"`
-	Obfuscate struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes, persist the mapping to the session file"`
-	Restore   struct{} `command:"restore" description:"reverse pass — restore originals in an AI response using the session file"`
-	Show      struct{} `command:"show" description:"print the current session mapping as a TOKEN/KIND/ORIGIN/REPLACE table"`
+	Input         string   `short:"i" long:"input" description:"input file (default: stdin)"`
+	Output        string   `short:"o" long:"output" description:"output file (default: stdout)"`
+	Session       string   `short:"s" long:"session" description:"session file (default: /tmp/ospooflog_session.json)"`
+	Mode          string   `long:"mode" description:"detection breadth — safe (default): strict context only | balanced: + 'as alice' / abs paths / bare ports | aggressive: + single-label HOST / base64 decode-verify"`
+	Aggressive    bool     `long:"aggressive" description:"deprecated alias for --mode aggressive"`
+	FastRestore   bool     `long:"fast-restore" description:"opt out of word-boundary aware restore — faster, but a registered fake that's a prefix of an unrelated string in the AI response will be wrongly replaced"`
+	StrictRestore bool     `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
+	DryRun        bool     `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
+	Diff          bool     `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
+	Overrides     string   `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
+	Ignore        string   `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
+	Cut           string   `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
+	JSON          bool     `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
+	AllowKeys     string   `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
+	Debug         bool     `long:"debug" description:"debug logging on stderr (session load count, match dumps in dry-run)"`
+	Obfuscate     struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes, persist the mapping to the session file"`
+	Restore       struct{} `command:"restore" description:"reverse pass — restore originals in an AI response using the session file"`
+	Show          struct{} `command:"show" description:"print the current session mapping as a TOKEN/KIND/ORIGIN/REPLACE table"`
 }
 
 func main() {
@@ -123,7 +123,17 @@ func run(args []string) error {
 		return errors.New("command required: obfuscate | restore | show")
 	}
 
+	// Config file fills options the flags left unset (flag > config > default),
+	// then the built-in fallbacks for what neither set.
+	cfg, err := loadConfig()
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	cfg.applyTo(&o)
 	o.Session = sessionPath(o.Session)
+	if o.Mode == "" {
+		o.Mode = "safe"
+	}
 
 	if o.StrictRestore {
 		fmt.Fprintln(os.Stderr, "warning: --strict-restore is deprecated — strict restore is now the default; pass --fast-restore to opt out")
@@ -141,11 +151,11 @@ func run(args []string) error {
 			return fmt.Errorf("overrides: %w", err)
 		}
 		m.SetOverrides(overrideLiterals(ov))
-		if o.Dbg {
+		if o.Debug {
 			fmt.Fprintf(os.Stderr, "debug: loaded %d overrides from %s\n", len(ov), o.Overrides)
 		}
 	}
-	if o.Dbg {
+	if o.Debug {
 		fmt.Fprintf(os.Stderr, "debug: loaded %d entries from %s\n", len(m.Entries()), o.Session)
 	}
 
@@ -298,7 +308,7 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	if err := session.Save(o.Session, m); err != nil {
 		return fmt.Errorf("session save: %w", err)
 	}
-	if o.Dbg {
+	if o.Debug {
 		fmt.Fprintf(os.Stderr, "debug: session has %d entries after obfuscate\n", len(m.Entries()))
 	}
 	return nil
