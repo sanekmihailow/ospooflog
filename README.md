@@ -214,8 +214,9 @@ ospooflog -s session.json show
                      pass `--fast-restore` to opt out.
   --dry-run          obfuscate: print detected matches without modifying
                      text or persisting the session.
-  --overrides path   YAML file with fixed origin → replace pairs that win
-                     over the built-in templates.
+  --overrides path   YAML file with origin → replace pairs that win over the
+                     built-in templates; a literal origin matches verbatim,
+                     `origin: re:<pattern>` matches a class by Go regexp.
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
@@ -256,15 +257,23 @@ echo "also try 192.168.0.10 instead" | ospooflog -s s.json --fast-restore restor
 ```yaml
 # overrides.yaml
 overrides:
-  - origin: alice
+  - origin: alice            # literal — matches verbatim (one-to-one)
     replace: bob
   - origin: 10.1.2.3
     replace: 172.16.0.5
+  - origin: "re:user[0-9]+"  # re: prefix — Go regexp masking a whole class
+    replace: MASKED_USER
 ```
 
 ```sh
 ospooflog -s s.json --overrides overrides.yaml -i error.log obfuscate
 ```
+
+A literal `origin` is replaced one-to-one. An `origin: re:<pattern>` masks every
+value matching the regexp to the same `replace` (so `user1`, `user42`, `user99`
+all become `MASKED_USER`); each distinct value is still recorded as its own
+session entry, so `restore` maps the shared fake back to a real value. Regex
+overrides are plain-text only — they're skipped under `--json`.
 
 ### Structured (NDJSON) logs
 

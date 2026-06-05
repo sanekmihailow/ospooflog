@@ -492,6 +492,154 @@ func TestOverrides_CustomReplaceWins(t *testing.T) {
 	}
 }
 
+// TestOverrides_RegexCollapsesClass covers the re: prefix: one pattern masks a
+// whole class to a single fake in the output, but each distinct matched value
+// is recorded as its own session entry so restore can reverse the shared fake.
+func TestOverrides_RegexCollapsesClass(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	showFile := filepath.Join(dir, "show.txt")
+	aiFile := filepath.Join(dir, "ai.txt")
+	resultFile := filepath.Join(dir, "result.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+	overridesFile := filepath.Join(dir, "overrides.yaml")
+
+	if err := os.WriteFile(overridesFile, []byte(`overrides:
+  - origin: "re:user[0-9]+"
+    replace: MASKED_USER
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logFile, []byte("login user1\nlogin user42\nlogin user99\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--overrides", overridesFile, "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// All three distinct values collapse to the one replace; none leak.
+	if got := strings.Count(string(safe), "MASKED_USER"); got != 3 {
+		t.Errorf("expected 3 MASKED_USER in output, got %d:\n%s", got, safe)
+	}
+	for _, leaked := range []string{"user1", "user42", "user99"} {
+		if strings.Contains(string(safe), leaked) {
+			t.Errorf("origin %q leaked into output:\n%s", leaked, safe)
+		}
+	}
+
+	// Each distinct match is its own session entry, not merged into one.
+	if err := run([]string{"-s", sessionFile, "-o", showFile, "show"}); err != nil {
+		t.Fatal(err)
+	}
+	show, err := os.ReadFile(showFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"user1", "user42", "user99"} {
+		if !strings.Contains(string(show), want) {
+			t.Errorf("session missing per-value entry for %q:\n%s", want, show)
+		}
+	}
+
+	// Restore maps the shared fake back to a real value (collapse is lossy by
+	// design — any one original is acceptable, but the fake must be gone).
+	if err := os.WriteFile(aiFile, []byte("check MASKED_USER now"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", aiFile, "-o", resultFile, "-s", sessionFile, "restore"}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := os.ReadFile(resultFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(result), "MASKED_USER") {
+		t.Errorf("restore left the fake in place:\n%s", result)
+	}
+	if !strings.Contains(string(result), "user1") &&
+		!strings.Contains(string(result), "user42") &&
+		!strings.Contains(string(result), "user99") {
+		t.Errorf("restore did not map the fake back to an original:\n%s", result)
+	}
+}
+
+// TestOverrides_LiteralWinsOverRegex confirms precedence: an explicit literal
+// claims its value before a regex pattern covering the same span runs.
+func TestOverrides_LiteralWinsOverRegex(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+	overridesFile := filepath.Join(dir, "overrides.yaml")
+
+	if err := os.WriteFile(overridesFile, []byte(`overrides:
+  - origin: "re:user[0-9]+"
+    replace: GENERIC
+  - origin: user42
+    replace: SPECIAL
+`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(logFile, []byte("user1 user42 user99"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--overrides", overridesFile, "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(safe), "SPECIAL") {
+		t.Errorf("literal override should win for user42:\n%s", safe)
+	}
+	if got := strings.Count(string(safe), "GENERIC"); got != 2 {
+		t.Errorf("regex should still mask the other two as GENERIC, got %d:\n%s", got, safe)
+	}
+}
+
+func TestOverrides_RegexBadRegexErrors(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	overridesFile := filepath.Join(dir, "overrides.yaml")
+	if err := os.WriteFile(logFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overridesFile, []byte("overrides:\n  - origin: \"re:[unterminated\"\n    replace: X\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"-i", logFile, "-o", filepath.Join(dir, "out"), "-s", filepath.Join(dir, "s.json"), "--overrides", overridesFile, "obfuscate"})
+	if err == nil {
+		t.Fatal("expected error for bad regex override")
+	}
+	if !strings.Contains(err.Error(), "bad regex") {
+		t.Errorf("error should mention bad regex, got: %v", err)
+	}
+}
+
+func TestOverrides_RegexEmptyMatchRejected(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	overridesFile := filepath.Join(dir, "overrides.yaml")
+	if err := os.WriteFile(logFile, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(overridesFile, []byte("overrides:\n  - origin: \"re:.*\"\n    replace: X\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err := run([]string{"-i", logFile, "-o", filepath.Join(dir, "out"), "-s", filepath.Join(dir, "s.json"), "--overrides", overridesFile, "obfuscate"})
+	if err == nil {
+		t.Fatal("expected error for empty-matching regex override")
+	}
+	if !strings.Contains(err.Error(), "empty string") {
+		t.Errorf("error should mention empty string, got: %v", err)
+	}
+}
+
 func TestIgnore_LiteralAndRegexBothApplied(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "log.txt")
