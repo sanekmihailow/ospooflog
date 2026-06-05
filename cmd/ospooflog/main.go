@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -36,7 +37,7 @@ type opts struct {
 	StrictRestore bool   `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
 	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
 	Diff          bool   `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
-	Overrides     string `long:"overrides" description:"YAML file with fixed origin → replace pairs that win over the built-in templates; plain-text mode only (NUL placeholders collide with JSON)"`
+	Overrides     string `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
 	Ignore        string `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
 	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
@@ -75,14 +76,14 @@ func run(args []string) error {
 	if err := session.Load(o.Session, m); err != nil {
 		return fmt.Errorf("session load: %w", err)
 	}
-	var ov map[string]string
+	var ov []overrideRule
 	if o.Overrides != "" {
 		var err error
 		ov, err = loadOverrides(o.Overrides)
 		if err != nil {
 			return fmt.Errorf("overrides: %w", err)
 		}
-		m.SetOverrides(ov)
+		m.SetOverrides(overrideLiterals(ov))
 		if o.Dbg {
 			fmt.Fprintf(os.Stderr, "debug: loaded %d overrides from %s\n", len(ov), o.Overrides)
 		}
@@ -123,7 +124,7 @@ func rulesForMode(mode string, deprecatedAggressive bool) ([]detector.Rule, erro
 	}
 }
 
-func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
+func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	if o.DryRun && o.Diff {
 		return errors.New("--diff and --dry-run are mutually exclusive")
 	}
@@ -146,29 +147,58 @@ func runObfuscate(o opts, m *mapper.Mapper, ov map[string]string) error {
 	}
 	originalText := text
 
-	// Literal sed-style overrides: replace every occurrence of origin with a
-	// NUL-bracketed placeholder before detection so (a) the detector cannot
-	// re-tokenize the replace value and (b) the substitution wins even when
-	// no rule would have matched origin. NUL is illegal inside JSON strings,
-	// so this path only runs in plain-text mode; --json keeps the old
-	// SetOverrides behavior. Longest origins first so shorter ones don't
-	// clobber overlapping prefixes.
+	// Sed-style overrides: replace each origin with a NUL-bracketed placeholder
+	// before detection so (a) the detector cannot re-tokenize the replace value
+	// and (b) the substitution wins even when no rule would have matched origin.
+	// NUL is illegal inside JSON strings, so this pass only runs in plain-text
+	// mode; --json keeps the old SetOverrides behavior for literals.
 	var ovSlots []struct{ replace string }
 	if !o.JSON && len(ov) > 0 {
-		keys := make([]string, 0, len(ov))
-		for k := range ov {
-			keys = append(keys, k)
+		var literals, regexes []overrideRule
+		for _, r := range ov {
+			if r.re != nil {
+				regexes = append(regexes, r)
+			} else {
+				literals = append(literals, r)
+			}
 		}
-		sort.Slice(keys, func(i, j int) bool { return len(keys[i]) > len(keys[j]) })
-		for _, origin := range keys {
-			repl := ov[origin]
-			if origin == "" || repl == "" || !strings.Contains(text, origin) {
+		// Literals first (longest origin first so a shorter one doesn't clobber
+		// an overlapping prefix) — unchanged one-to-one behavior. Regexes after,
+		// so an explicit literal wins over a pattern covering the same span.
+		sort.Slice(literals, func(i, j int) bool { return len(literals[i].literal) > len(literals[j].literal) })
+		for _, r := range literals {
+			if !strings.Contains(text, r.literal) {
 				continue
 			}
 			ph := fmt.Sprintf("\x00OVR%d\x00", len(ovSlots))
-			text = strings.ReplaceAll(text, origin, ph)
-			ovSlots = append(ovSlots, struct{ replace string }{repl})
-			m.RegisterOverride(origin, repl)
+			text = strings.ReplaceAll(text, r.literal, ph)
+			ovSlots = append(ovSlots, struct{ replace string }{r.replace})
+			m.RegisterOverride(r.literal, r.replace)
+		}
+		// Regex: every match collapses to one replace in the output, but each
+		// distinct matched value is registered separately so restore reverses
+		// the shared fake back to a real value.
+		for _, r := range regexes {
+			ph := fmt.Sprintf("\x00OVR%d\x00", len(ovSlots))
+			next, matched := replaceOutsidePlaceholders(text, r.re, ph)
+			if len(matched) == 0 {
+				continue
+			}
+			text = next
+			for _, v := range matched {
+				m.RegisterOverride(v, r.replace)
+			}
+			ovSlots = append(ovSlots, struct{ replace string }{r.replace})
+		}
+	} else if o.JSON {
+		n := 0
+		for _, r := range ov {
+			if r.re != nil {
+				n++
+			}
+		}
+		if n > 0 {
+			fmt.Fprintf(os.Stderr, "warning: %d regex (re:) override(s) ignored in --json mode\n", n)
 		}
 	}
 
@@ -322,7 +352,16 @@ type overridesFile struct {
 	} `yaml:"overrides"`
 }
 
-func loadOverrides(path string) (map[string]string, error) {
+// overrideRule is one origin → replace pair. A literal origin matches verbatim
+// (the original one-to-one substitution); an origin prefixed "re:" compiles the
+// remainder as a Go regexp so a whole class of values collapses to one replace.
+type overrideRule struct {
+	re      *regexp.Regexp // non-nil for "re:<pattern>" origins
+	literal string         // origin value when re == nil
+	replace string
+}
+
+func loadOverrides(path string) ([]overrideRule, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -331,14 +370,73 @@ func loadOverrides(path string) (map[string]string, error) {
 	if err := yaml.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-	out := make(map[string]string, len(f.Overrides))
-	for _, r := range f.Overrides {
+	out := make([]overrideRule, 0, len(f.Overrides))
+	for i, r := range f.Overrides {
 		if r.Origin == "" || r.Replace == "" {
 			continue
 		}
-		out[r.Origin] = r.Replace
+		pat, isRegex := strings.CutPrefix(r.Origin, "re:")
+		if !isRegex {
+			out = append(out, overrideRule{literal: r.Origin, replace: r.Replace})
+			continue
+		}
+		re, err := regexp.Compile(pat)
+		if err != nil {
+			return nil, fmt.Errorf("%s: overrides[%d]: bad regex %q: %w", path, i, pat, err)
+		}
+		// An empty-matching pattern (".*", "a*") would splatter placeholders
+		// at every position via ReplaceAllString — reject it with a clear note.
+		if re.MatchString("") {
+			return nil, fmt.Errorf("%s: overrides[%d]: regex %q matches the empty string — use a more specific pattern", path, i, pat)
+		}
+		out = append(out, overrideRule{re: re, replace: r.Replace})
 	}
 	return out, nil
+}
+
+// overrideLiterals collects the literal pairs for the JSON-mode SetOverrides
+// path, which matches detector-found values by equality and so can't apply
+// regex rules (those are skipped, with a warning, in JSON mode).
+func overrideLiterals(rules []overrideRule) map[string]string {
+	out := make(map[string]string, len(rules))
+	for _, r := range rules {
+		if r.re == nil {
+			out[r.literal] = r.replace
+		}
+	}
+	return out
+}
+
+// phPattern matches the NUL-bracketed override placeholders inserted by the
+// override pre-pass, so a later regex override never matches inside one.
+var phPattern = regexp.MustCompile("\x00OVR\\d+\x00")
+
+// replaceOutsidePlaceholders swaps every match of re for ph in the parts of
+// text that are not an existing placeholder, returning the new text and the
+// distinct matched substrings (each registered separately so restore can map
+// the shared fake back to a real value). Skipping placeholder spans keeps a
+// broad pattern (e.g. re:\d+) from corrupting an earlier override's "OVR<n>".
+func replaceOutsidePlaceholders(text string, re *regexp.Regexp, ph string) (string, []string) {
+	var b strings.Builder
+	seen := map[string]bool{}
+	var distinct []string
+	apply := func(seg string) {
+		for _, m := range re.FindAllString(seg, -1) {
+			if !seen[m] {
+				seen[m] = true
+				distinct = append(distinct, m)
+			}
+		}
+		b.WriteString(re.ReplaceAllString(seg, ph))
+	}
+	last := 0
+	for _, loc := range phPattern.FindAllStringIndex(text, -1) {
+		apply(text[last:loc[0]])
+		b.WriteString(text[loc[0]:loc[1]])
+		last = loc[1]
+	}
+	apply(text[last:])
+	return b.String(), distinct
 }
 
 func splitCSV(s string) []string {
