@@ -285,6 +285,17 @@ For lines with a CRI prefix (`2026-... stdout F {...}`), the line falls
 back to plain-text obfuscation. Pure JSON lines have their string leaves
 swapped while keys, numbers and the JSON shape are preserved.
 
+## Exit codes
+
+So scripts and CI can branch on the failure class:
+
+| Code | Meaning                                                              |
+|------|---------------------------------------------------------------------|
+| `0`  | success                                                             |
+| `1`  | bad arguments or config — flag parse, unknown `--mode`, malformed YAML |
+| `2`  | I/O failure — input/output/session file can't be opened, read or written |
+| `3`  | bad detection rule — a `re:` pattern in `--overrides` or `--ignore` won't compile (or matches the empty string) |
+
 ## Session file
 
 ```json
