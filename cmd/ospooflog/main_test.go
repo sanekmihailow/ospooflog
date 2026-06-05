@@ -655,6 +655,7 @@ func TestExitCodes(t *testing.T) {
 	badOverrides := write("bad-re.yaml", "overrides:\n  - origin: \"re:[bad\"\n    replace: X\n")
 	emptyOverrides := write("empty-re.yaml", "overrides:\n  - origin: \"re:.*\"\n    replace: X\n")
 	badIgnore := write("bad-ignore.txt", "re:[bad\n")
+	badCut := write("bad-cut.txt", "re:[bad\n")
 	out := filepath.Join(dir, "out")
 	sess := filepath.Join(dir, "s.json")
 
@@ -668,6 +669,7 @@ func TestExitCodes(t *testing.T) {
 		{"bad-overrides-regex", []string{"-i", goodLog, "-o", out, "-s", sess, "--overrides", badOverrides, "obfuscate"}, 3},
 		{"empty-overrides-regex", []string{"-i", goodLog, "-o", out, "-s", sess, "--overrides", emptyOverrides, "obfuscate"}, 3},
 		{"bad-ignore-regex", []string{"-i", goodLog, "-o", out, "-s", sess, "--ignore", badIgnore, "obfuscate"}, 3},
+		{"bad-cut-regex", []string{"-i", goodLog, "-o", out, "-s", sess, "--cut", badCut, "obfuscate"}, 3},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -679,6 +681,85 @@ func TestExitCodes(t *testing.T) {
 				t.Errorf("exitCode = %d, want %d (err: %v)", got, tc.want, err)
 			}
 		})
+	}
+}
+
+// TestCut_RemovesWholeLines covers --cut: a literal substring drops the whole
+// line it touches, before detection, and the surrounding lines still obfuscate.
+func TestCut_RemovesWholeLines(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	cutFile := filepath.Join(dir, "cut.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	raw := "real line user=alice\n#----------------(HOME-WIN) 7-[Sat Jun 06] [10.0.0.1]\nkeep this user=bob\n"
+	if err := os.WriteFile(logFile, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cutFile, []byte("# drop the shell prompt\n(HOME-WIN)\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--cut", cutFile, "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The cut line (and the IP inside it) is gone entirely — not masked, removed.
+	for _, gone := range []string{"HOME-WIN", "10.0.0.1", "Sat Jun"} {
+		if strings.Contains(string(safe), gone) {
+			t.Errorf("cut content %q should be removed:\n%s", gone, safe)
+		}
+	}
+	// Surrounding lines survive and are still obfuscated.
+	for _, want := range []string{"user1", "user2"} {
+		if !strings.Contains(string(safe), want) {
+			t.Errorf("kept line missing masked value %q:\n%s", want, safe)
+		}
+	}
+}
+
+// TestCut_MultilineBlock covers a (?s) regexp dropping a whole multi-line block
+// (a 3-line shell prompt pasted into the log), keeping the lines around it.
+func TestCut_MultilineBlock(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "log.txt")
+	safeFile := filepath.Join(dir, "safe.txt")
+	cutFile := filepath.Join(dir, "cut.txt")
+	sessionFile := filepath.Join(dir, "s.json")
+
+	raw := "before user=alice\n" +
+		"                    ✅\n" +
+		"#----------------(HOME-WIN) 7-[Sat Jun 06] [10.0.0.1] (test)080d344\n" +
+		" 00:40:14j=0 sanekM@HOME-WIN: ~/DOWNLOAD\n" +
+		"\n" +
+		" $\n" +
+		"after user=bob\n"
+	if err := os.WriteFile(logFile, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// One pattern spans the whole prompt: from the status line through the "$".
+	if err := os.WriteFile(cutFile, []byte("re:(?s)✅.*?\\$\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-i", logFile, "-o", safeFile, "-s", sessionFile, "--cut", cutFile, "obfuscate"}); err != nil {
+		t.Fatal(err)
+	}
+	safe, err := os.ReadFile(safeFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{"✅", "HOME-WIN", "sanekM", "080d344"} {
+		if strings.Contains(string(safe), gone) {
+			t.Errorf("multi-line block content %q should be gone:\n%s", gone, safe)
+		}
+	}
+	for _, want := range []string{"user1", "user2"} {
+		if !strings.Contains(string(safe), want) {
+			t.Errorf("line outside the block missing masked value %q:\n%s", want, safe)
+		}
 	}
 }
 

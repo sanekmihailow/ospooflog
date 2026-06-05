@@ -214,9 +214,19 @@ ospooflog -s session.json show
                      pass `--fast-restore` to opt out.
   --dry-run          obfuscate: print detected matches without modifying
                      text or persisting the session.
+  --diff             obfuscate: print a per-line diff of original vs
+                     obfuscated text instead of the result; does not persist
+                     the session (mutually exclusive with --dry-run).
   --overrides path   YAML file with origin → replace pairs that win over the
                      built-in templates; a literal origin matches verbatim,
                      `origin: re:<pattern>` matches a class by Go regexp.
+  --ignore path      obfuscate: file of values to leave unmasked — one per
+                     line, `#` comments, `re:<pattern>` for a regexp matched
+                     against captured values.
+  --cut path         obfuscate: file of literal substrings / `re:<pattern>`
+                     regexps; any line a match touches is removed entirely
+                     before detection. A multi-line `(?s)` regexp drops the
+                     whole spanned block. Not reversible.
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
@@ -274,6 +284,28 @@ value matching the regexp to the same `replace` (so `user1`, `user42`, `user99`
 all become `MASKED_USER`); each distinct value is still recorded as its own
 session entry, so `restore` maps the shared fake back to a real value. Regex
 overrides are plain-text only — they're skipped under `--json`.
+
+### Cutting noise with `--cut`
+
+Unlike `--overrides` (which replaces) and `--ignore` (which leaves values
+visible), `--cut` deletes whole lines a pattern touches — for prompt/banner
+noise pasted into a log that you want gone, not masked. It runs before
+detection, so the content reaches neither the AI nor the session (and so is
+not reversible).
+
+```
+# cut.txt — a literal substring, or re:<pattern>
+(HOME-WIN)                       # drops any line containing this
+re:(?s)✅.*?\$                    # drops a whole multi-line shell prompt block
+```
+
+```sh
+ospooflog -s s.json --cut cut.txt -i session.log obfuscate
+```
+
+A literal matches a substring; a `re:` pattern is a Go regexp. A single-line
+pattern drops its line; a multi-line `(?s)` pattern drops every line the match
+spans — handy for a multi-line `PS1` prompt copied into the log.
 
 ### Structured (NDJSON) logs
 
