@@ -121,11 +121,11 @@ ospooflog -s session.json show
 | SID      | `S-1-5-21-3623811015-3361044348-30300820-1013`          | `S-1-5-21-0-0-0-1` (well-known SIDs like `S-1-5-18` kept) |
 | EMAIL    | `alice@corp.com`                                        | `user1@example.com`                            |
 | ADDR     | `10.23.41.5:5432`                                       | `192.168.0.1:5432` (port preserved)            |
-| IP       | `10.23.41.5` (private), `203.0.113.5` (public)          | `192.168.0.1` / `77.0.0.1` (public → 77.0.0.0/8; well-known resolvers like `8.8.8.8` kept) |
+| IP       | `10.23.41.5` (private), `203.0.113.5` (public)          | `192.168.0.1` / `77.0.0.1` (public → 77.0.0.0/8; well-known resolvers like `8.8.8.8` and k8s default service IPs like `10.96.0.1` / `10.43.0.1` kept) |
 | IP6      | `fe80::1` (link-local/ULA), `2a00:1450::1` (global)     | `fd00::1` / `2001:db8::1` (global → RFC 3849 doc prefix; well-known resolvers like `2001:4860:4860::8888` kept) |
 | MAC      | `aa:bb:cc:dd:ee:ff`                                     | `02:00:00:00:00:01` (locally-administered)     |
 | HOST     | `db-prod.internal` (corporate)                          | `myhost1.local`; cloud-provider internal DNS (`*.ec2.internal`, `*.compute.internal`, `*.c.<project>.internal`, `*.ru-central1.internal`, `google.internal`) is kept |
-| FQDN     | `api.example.com`, `host.xn--p1ai`                      | `service1.example.com` (full IANA TLD set)     |
+| FQDN     | `api.example.com`, `host.xn--p1ai`                      | `service1.example.com` (full IANA TLD set; cloud service domains like `s3.amazonaws.com`, `storage.googleapis.com`, `*.blob.core.windows.net` kept) |
 | USER     | `user=alice`, `Failed publickey for alice`              | `user1` (only the value swaps)                 |
 | PATH     | `/var/lib/postgresql/data`, `/sbin/auditctl`            | `/var/lib/myapp1/data`                         |
 | PORT     | `:5432` (only with `--aggressive`)                      | `:8080`                                        |
@@ -147,7 +147,7 @@ ospooflog -s session.json show
 - Fly.io `fm2_…`,
 - GCP service-account `"private_key_id":…` / `"client_id":…` (21-digit) / `project_id` (JSON, env, `--project` flag),
 - GitHub `ghp_…` / `github_pat_…`,
-- GitLab `glpat-…` / `glrt-…` / `gldt-…`,
+- GitLab `glpat-…` / `glrt-…` / `gldt-…` / `glsoat-…` / `glptt-…` / `glagent-…` / `glfeed-…` / `glimt-…` / `glcbt-…`,
 - Google `AIza…` / OAuth `ya29.…`,
 - Grafana Cloud `glc_…`,
 - Groq `gsk_…`,
