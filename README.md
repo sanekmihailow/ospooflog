@@ -230,7 +230,7 @@ ospooflog -s session.json show
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
-  --dbg              debug logging on stderr.
+  --debug            debug logging on stderr.
 ```
 
 ## Examples
@@ -327,6 +327,31 @@ So scripts and CI can branch on the failure class:
 | `1`  | bad arguments or config — flag parse, unknown `--mode`, malformed YAML |
 | `2`  | I/O failure — input/output/session file can't be opened, read or written |
 | `3`  | bad detection rule — a `re:` pattern in `--overrides` or `--ignore` won't compile (or matches the empty string) |
+
+## Config file
+
+To avoid repeating the same flags, defaults can be set in a YAML config. Both
+locations are read, with the project file overlaid on the per-user one, and an
+explicit flag overrides both:
+
+1. `./.ospooflog.yaml` (project — highest priority)
+2. `~/.config/ospooflog/config.yaml` (per-user)
+
+```yaml
+# .ospooflog.yaml — every key is optional
+mode: balanced              # --mode
+session: ./logs/s.json      # default session path
+allow_keys: level,time,msg  # --allow-keys
+ignore: ./.ospoof-ignore    # --ignore file
+overrides: ./ovr.yaml       # --overrides file
+cut: ./.ospoof-cut          # --cut file
+fast_restore: false         # --fast-restore
+json: false                 # --json
+debug: false                # --debug
+```
+
+Precedence is **flag > project config > user config > built-in default**. A
+missing config file is ignored; a malformed one is an error (exit code 1).
 
 ## Session file
 
