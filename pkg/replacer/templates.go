@@ -35,7 +35,14 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 	detector.KindIP: func(n int, extra map[string]string) string {
 		return fakeIP(n, extra)
 	},
-	detector.KindIP6: func(n int, _ map[string]string) string {
+	detector.KindIP6: func(n int, extra map[string]string) string {
+		// Mirror the IPv4 scope split: global-unicast origins → the
+		// RFC 3849 documentation prefix 2001:db8::/32 (non-routable, the
+		// universally-recognised "example" IPv6 — capacity is a non-issue
+		// at /32), private/link-local/unset → ULA fd00::.
+		if extra["scope"] == "public" {
+			return fmt.Sprintf("2001:db8::%x", n)
+		}
 		return fmt.Sprintf("fd00::%x", n)
 	},
 	detector.KindMAC: func(n int, _ map[string]string) string {
@@ -102,6 +109,11 @@ var templates = map[detector.EntityKind]func(n int, extra map[string]string) str
 		// NANP "555-0100" through "555-0199" range is reserved for fictional
 		// use, so a fake here can never collide with a real subscriber.
 		return fmt.Sprintf("+15555550%03d", n%1000)
+	},
+	detector.KindSID: func(n int, _ map[string]string) string {
+		// Same S-1-5-21-<domain>-<rid> shape with a zeroed domain identifier
+		// so it's obviously synthetic; the counter varies the RID.
+		return fmt.Sprintf("S-1-5-21-0-0-0-%d", n)
 	},
 	detector.KindCard: func(n int, _ map[string]string) string {
 		// 4000-series is reserved for Visa test cards. The base "4000 0000

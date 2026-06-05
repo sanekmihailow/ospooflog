@@ -17,8 +17,8 @@ func TestGenerate_Basic(t *testing.T) {
 	}{
 		{detector.KindIP, 1, nil, "192.168.0.1"}, // no scope → private default
 		{detector.KindIP, 7, nil, "192.168.0.7"},
-		{detector.KindIP, 300, nil, "192.168.1.44"},                            // private spreads past one octet, no overflow
-		{detector.KindIP, 1, map[string]string{"scope": "public"}, "77.0.0.1"}, // public → 77/8
+		{detector.KindIP, 300, nil, "192.168.1.44"},                              // private spreads past one octet, no overflow
+		{detector.KindIP, 1, map[string]string{"scope": "public"}, "77.0.0.1"},   // public → 77/8
 		{detector.KindIP, 258, map[string]string{"scope": "public"}, "77.0.1.2"}, // public spreads past one octet
 		{detector.KindAddr, 2, map[string]string{"port": "5432"}, "192.168.0.2:5432"},
 		{detector.KindAddr, 1, nil, "192.168.0.1:8080"}, // fallback port, private default
@@ -29,6 +29,7 @@ func TestGenerate_Basic(t *testing.T) {
 		{detector.KindEmail, 4, nil, "user4@example.com"},
 		{detector.KindUUID, 1, nil, "00000000-0000-0000-0000-000000000001"},
 		{detector.KindUUID, 99, nil, "00000000-0000-0000-0000-000000000099"},
+		{detector.KindSID, 1, nil, "S-1-5-21-0-0-0-1"},
 	}
 	for _, c := range cases {
 		got := r.Generate(c.kind, c.n, c.extra)

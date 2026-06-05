@@ -52,6 +52,25 @@ func TestAddr_BeatsBareIP(t *testing.T) {
 	}
 }
 
+func TestUser_ConnectionStringUserId(t *testing.T) {
+	// ADO.NET / JDBC connection-string field "User Id=" / "UserID=".
+	for _, tc := range []struct{ text, want string }{
+		{"Server=db;User Id=sa;Password=x", "sa"},
+		{"UserID=dbadmin;Password=y", "dbadmin"},
+	} {
+		var got string
+		for _, m := range New(DefaultRules()).Find(tc.text) {
+			if m.Kind == KindUser {
+				got = m.Value
+				break
+			}
+		}
+		if got != tc.want {
+			t.Errorf("text=%q: want user %q, got %q", tc.text, tc.want, got)
+		}
+	}
+}
+
 func TestUser_OnlyInExplicitContext(t *testing.T) {
 	text := "user=alice and login: bob and somewhere alice appears bare"
 	matches := New(DefaultRules()).Find(text)
@@ -323,6 +342,47 @@ func TestUser_SSHDLoginPatterns(t *testing.T) {
 		}
 		if got != tc.want {
 			t.Errorf("text=%q: want user %q, got %q", tc.text, tc.want, got)
+		}
+	}
+}
+
+func TestUser_WindowsAccountName(t *testing.T) {
+	// Windows Event Log "Account Name: <user>" field.
+	for _, tc := range []struct{ text, want string }{
+		{"Account Name: jsmith Account Domain: CORP", "jsmith"},
+		{"Account Name:\tadministrator", "administrator"},
+	} {
+		var got string
+		for _, m := range New(DefaultRules()).Find(tc.text) {
+			if m.Kind == KindUser {
+				got = m.Value
+				break
+			}
+		}
+		if got != tc.want {
+			t.Errorf("text=%q: want user %q, got %q", tc.text, tc.want, got)
+		}
+	}
+}
+
+func TestSID_WindowsAccountIdentifier(t *testing.T) {
+	// Domain/local account SID (S-1-5-21-<domain>-<rid>) → masked.
+	text := "Security ID: S-1-5-21-3623811015-3361044348-30300820-1013 logged on"
+	var got string
+	for _, m := range New(DefaultRules()).Find(text) {
+		if m.Kind == KindSID {
+			got = m.Value
+		}
+	}
+	if got != "S-1-5-21-3623811015-3361044348-30300820-1013" {
+		t.Errorf("domain SID not captured, got %q", got)
+	}
+	// Well-known / builtin SIDs are constants, not identities — left alone.
+	for _, wk := range []string{"S-1-5-18", "S-1-5-32-544", "S-1-1-0", "S-1-5-19"} {
+		for _, m := range New(DefaultRules()).Find("token owner " + wk + " present") {
+			if m.Kind == KindSID {
+				t.Errorf("well-known SID %q should not be masked, got %q", wk, m.Value)
+			}
 		}
 	}
 }
@@ -678,6 +738,8 @@ func TestUser_KeywordIdentifier(t *testing.T) {
 		// journald / generic "as user <name>"
 		{`connection from 10.0.0.8 as user deploy`, want{[]string{"deploy"}, []string{"user"}}},
 		{`connect as user johndoe ok`, want{[]string{"johndoe"}, []string{"user"}}},
+		// MongoDB "authenticated as principal <name> on <db>"
+		{`Successfully authenticated as principal admin on admin`, want{[]string{"admin"}, []string{"principal"}}},
 		// sshd: "user" IS the account, "from" is the next field — must not
 		// flip to capturing "from", and must still mask the account "user".
 		{`Failed password for user from 1.2.3.4`, want{[]string{"user"}, []string{"from"}}},
@@ -1149,6 +1211,35 @@ func TestIP_ScopeExtra(t *testing.T) {
 	}
 }
 
+func TestIP6_ScopeExtra(t *testing.T) {
+	// IPv6 mirrors IPv4: global unicast → public (2001:db8::/32 fake),
+	// ULA fc00::/7 and link-local fe80::/10 → private (fd00:: fake).
+	cases := []struct {
+		text  string
+		value string
+		scope string
+	}{
+		{"peer 2a00:1450:4001:81b::200e up", "2a00:1450:4001:81b::200e", "public"},
+		{"peer 2606:2800:220:1:248:1893:25c8:1946 up", "2606:2800:220:1:248:1893:25c8:1946", "public"},
+		{"link fe80::1 up", "fe80::1", "private"},
+		{"ula fd12:3456:789a::1 up", "fd12:3456:789a::1", "private"},
+	}
+	for _, tc := range cases {
+		var found bool
+		for _, m := range New(DefaultRules()).Find(tc.text) {
+			if m.Kind == KindIP6 && m.Value == tc.value {
+				found = true
+				if got := m.Extra["scope"]; got != tc.scope {
+					t.Errorf("%s: scope=%q want %q", tc.value, got, tc.scope)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("IPv6 %q not detected in %q", tc.value, tc.text)
+		}
+	}
+}
+
 func TestIP_WellKnownPublicResolversPreserved(t *testing.T) {
 	// Public DNS / anycast resolver IPs are global constants, not PII —
 	// must pass through unmasked so the AI keeps the context.
@@ -1182,6 +1273,56 @@ func TestIP_WellKnownPublicResolversPreserved(t *testing.T) {
 		if m.Kind == KindAddr {
 			t.Errorf("well-known resolver ADDR 8.8.8.8:53 was masked: %q", m.Value)
 		}
+	}
+}
+
+func TestIP_K8sServiceIPsPreserved(t *testing.T) {
+	// Default kubeadm/k3s service-CIDR anchors (API server .0.1, DNS .0.10)
+	// are fixed by convention, not tenant-specific — kept like resolvers.
+	for _, ip := range []string{"10.96.0.1", "10.96.0.10", "10.43.0.1", "10.43.0.10"} {
+		for _, m := range New(DefaultRules()).Find("pod dialed " + ip + " ok") {
+			if m.Kind == KindIP && m.Value == ip {
+				t.Errorf("k8s service IP %q was masked", ip)
+			}
+		}
+	}
+	// An ordinary address in the same 10/8 block must still be masked.
+	var masked bool
+	for _, m := range New(DefaultRules()).Find("backend at 10.96.5.5 ok") {
+		if m.Kind == KindIP && m.Value == "10.96.5.5" {
+			masked = true
+		}
+	}
+	if !masked {
+		t.Error("ordinary 10.96.5.5 should still be masked (only the .0.1/.0.10 anchors are preserved)")
+	}
+}
+
+func TestFQDN_CloudServiceDomainsPreserved(t *testing.T) {
+	// Public cloud service endpoints are fixed provider domains, not PII —
+	// preserved like docker.io / github.com.
+	preserved := []string{
+		"s3.amazonaws.com", "ec2.eu-west-1.amazonaws.com",
+		"storage.googleapis.com", "acct.blob.core.windows.net",
+		"d111111abcdef8.cloudfront.net", "login.microsoftonline.com",
+	}
+	for _, d := range preserved {
+		text := "request to " + d + " failed"
+		for _, m := range New(DefaultRules()).Find(text) {
+			if m.Kind == KindFQDN && m.Value == d {
+				t.Errorf("cloud service domain %q was masked", d)
+			}
+		}
+	}
+	// A tenant-looking FQDN that isn't a cloud-service domain still masks.
+	var masked bool
+	for _, m := range New(DefaultRules()).Find("request to api.acmecorp.com failed") {
+		if m.Kind == KindFQDN && m.Value == "api.acmecorp.com" {
+			masked = true
+		}
+	}
+	if !masked {
+		t.Error("api.acmecorp.com should still be masked")
 	}
 }
 
@@ -1416,6 +1557,12 @@ func TestAPIKey_NewProviderTokens(t *testing.T) {
 		{"gcp-project-cli-eq", "--project=my-test-project-12345"},
 		{"gcp-project-cli-space", "--project my-test-project-12345"},
 		{"gcp-sa-client-id", `"client_id": "123456789012345678901"`},
+		{"google-oauth", "ya29." + alphanumN(60)},
+		{"docker-hub-pat", "dckr_pat_" + alphanumN(27)},
+		{"figma", "figd_" + alphanumN(40)},
+		{"gitlab-pat", "glpat-" + alphanumN(20)},
+		{"gitlab-runner", "glrt-" + alphanumN(30)},
+		{"gitlab-deploy", "gldt-" + alphanumN(30)},
 	}
 	for _, tc := range cases {
 		matches := New(DefaultRules()).Find(tc.text)

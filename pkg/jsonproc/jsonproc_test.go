@@ -43,6 +43,19 @@ func TestProcess_JSONLineObfuscatesStrings(t *testing.T) {
 	}
 }
 
+func TestProcess_RemoteUserAndPrincipalHints(t *testing.T) {
+	p := newProc(nil)
+	// nginx/apache "remote_user" and mongo/auth "principal" are bare
+	// usernames with no detectable pattern — masked via key hint.
+	out := p.processLine(`{"remote_user":"alice","principal":"bob","status":"200"}`)
+	if strings.Contains(out, `"alice"`) {
+		t.Errorf("remote_user value not obfuscated: %s", out)
+	}
+	if strings.Contains(out, `"bob"`) {
+		t.Errorf("principal value not obfuscated: %s", out)
+	}
+}
+
 func TestProcess_AllowKeysSkipped(t *testing.T) {
 	p := newProc([]string{"level", "timestamp"})
 	in := `{"level":"alice","user":"alice","timestamp":"10.1.2.3"}`

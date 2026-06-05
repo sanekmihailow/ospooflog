@@ -5,6 +5,41 @@ All notable changes to ospooflog are documented here. Format loosely follows
 narrative summary rather than a strict Added/Changed/Fixed split — see the
 linked PR for the full commit list.
 
+## [v0.3.5] — 2026-06-05
+
+Diff [v0.3.4...v0.3.5](https://github.com/sanekmihailow/ospooflog/compare/v0.3.4...v0.3.5)
+
+Aggregates several patch PRs merged into `dev`. No new CLI flags. One new
+entity kind (`SID`) and a behaviour change for IPv6: global addresses now
+render in `2001:db8::/32` instead of collapsing into the private-looking
+`fd00::` range — mirrors the IPv4 scope split from v0.3.4. Existing session
+files restore unchanged.
+
+- **IPv6 masking by scope** — global-unicast origins map to `2001:db8::/32`
+  (RFC 3849 documentation prefix), ULA / link-local (`fe80::/10`) stay in
+  `fd00::`. A global address no longer looks internal. Well-known IPv6
+  resolvers (Google/Cloudflare/Quad9) are still preserved.
+- **Windows SID detection** — `S-1-5-21-…` account identifiers (PII) are
+  masked to a zeroed-domain fake (`S-1-5-21-0-0-0-<rid>`); well-known /
+  builtin SIDs (`S-1-5-18`, `S-1-5-32-544`) are kept as constants. New
+  `SID` entity kind.
+- **Windows / connection-string usernames** — `Account Name: <user>`
+  (Event Log), `User Id=` / `UserID=` (ADO.NET / JDBC connection strings),
+  and MongoDB `as principal <name>` now mask the real account.
+- **More provider tokens** — Docker Hub (`dckr_pat_…`), Figma (`figd_…`),
+  Google OAuth (`ya29.…`), and a broadened GitLab set (runner, deploy,
+  scoped-OAuth, pipeline-trigger, cluster-agent, feed, incoming-mail,
+  CI/CD-build prefixes beyond `glpat-`).
+- **Cloud service domains / k8s service IPs preserved** — `s3.amazonaws.com`,
+  `storage.googleapis.com`, `*.blob.core.windows.net` and the default
+  kubeadm/k3s service IPs (`10.96.0.1`, `10.43.0.1`) carry infrastructure
+  context, not PII — kept like the existing public-domain allowlist.
+- **`--json` username keys** — `remote_user` (nginx/apache) and `principal`
+  (mongo/auth) bare usernames now mask in NDJSON mode via key hints.
+- **Detector performance** — dropped a redundant second regex pass in
+  `Find`; `audit.log` (3.7 MB) obfuscate roughly halves (aggressive
+  ~8.0s → ~1.7s).
+
 ## [v0.3.4] — 2026-06-04
 
 Diff [v0.3.3...v0.3.4](https://github.com/sanekmihailow/ospooflog/compare/v0.3.3...v0.3.4)

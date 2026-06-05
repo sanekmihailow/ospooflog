@@ -222,6 +222,19 @@ var protectedValues = map[string]bool{
 	"registry.k8s.io":   true,
 	"mcr.microsoft.com": true,
 	"public.ecr.aws":    true,
+	// Public cloud service endpoints — fixed provider domains, not PII.
+	// Subdomain match covers s3.amazonaws.com, ec2.eu-west-1.amazonaws.com,
+	// storage.googleapis.com, myacct.blob.core.windows.net, etc. Masking
+	// these to serviceN.example.com strips the "call to S3 / GCS / Azure
+	// Blob failed" signal the AI needs.
+	"amazonaws.com":          true, // AWS (s3, ec2, sqs, …)
+	"cloudfront.net":         true, // AWS CloudFront
+	"googleapis.com":         true, // GCP APIs (storage, compute, …)
+	"google.com":             true, // GCP / Google endpoints
+	"windows.net":            true, // Azure (blob.core.windows.net, …)
+	"azure.com":              true, // Azure
+	"microsoftonline.com":    true, // Azure AD / Entra ID
+	"digitaloceanspaces.com": true, // DigitalOcean Spaces
 	// Cloud-provider internal DNS suffixes. These are fixed per provider
 	// (not per tenant), so they carry topology context — "instance in
 	// ec2.internal" tells the AI it's AWS — without being PII. Only the
@@ -452,9 +465,19 @@ var (
 	rePort = regexp.MustCompile(`(?:^|[^a-zA-Z0-9_.\-])(:\d{2,5})\b`)
 
 	// USER conservative — explicit "user=" / "login=" / "username:" / "acct="
-	// context. "acct" picks up auditd / PAM records like acct="root". The
-	// optional quote after "=" lets the capture cross past quoted values.
-	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name)?|login|acct)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
+	// context. "acct" picks up auditd / PAM records like acct="root";
+	// "account name" picks up the Windows Event Log field ("Account Name:
+	// jsmith"); "user id" picks up the ADO.NET / JDBC connection-string
+	// field ("User Id=sa", "UserID=sa"). The optional quote after "=" lets
+	// the capture cross past quoted values.
+	reUserConservative = regexp.MustCompile(`(?i)\b(?:user(?:name|\s*id)?|login|acct|account\s+name)\s*[=:]\s*["']?([a-zA-Z][a-zA-Z0-9._-]{0,30})\b`)
+	// Windows security identifier for a domain/local account: the
+	// security_nt_non_unique authority (S-1-5-21) followed by the 3-part
+	// domain identifier and the account RID. Uniquely identifies a
+	// principal, so it's PII. Well-known/builtin SIDs (S-1-5-18,
+	// S-1-5-32-544, S-1-1-0) don't have this shape and are left alone —
+	// they're constants, not identities.
+	reSID = regexp.MustCompile(`\bS-1-5-21(?:-\d{1,10}){4}\b`)
 	// USER in sshd login messages. Default mode misses these without a
 	// dedicated rule because they use space-separated verbs, not "user="
 	// syntax. Covers the standard openssh vocabulary:
@@ -481,7 +504,9 @@ var (
 	// "user" and the following token is the next log field, so "for user
 	// <x>" would wrongly grab that field. Postgres's "for user "bob"" is
 	// quoted and handled by reUserRoleQuoted instead.
-	reUserAsKeyword = regexp.MustCompile(`(?i)\bas\s+user\s+["']?([a-zA-Z_][a-zA-Z0-9._-]{0,31})`)
+	// "as principal <name>" (MongoDB "authenticated as principal admin")
+	// is the same shape — handled alongside "user".
+	reUserAsKeyword = regexp.MustCompile(`(?i)\bas\s+(?:user|principal)\s+["']?([a-zA-Z_][a-zA-Z0-9._-]{0,31})`)
 	// USER aggressive — also "as <name>" / "for <name>". Lots of false-positive
 	// risk ("as needed", "for example").
 	reUserAggressive = regexp.MustCompile(`(?i)\b(?:as|for)\s+([a-zA-Z][a-zA-Z0-9._-]{1,30})\b`)
@@ -584,11 +609,21 @@ var (
 	reOpenAIKey = regexp.MustCompile(`\bsk-(?:(?:proj|svcacct|admin)-(?:[A-Za-z0-9_-]{74}|[A-Za-z0-9_-]{58})T3BlbkFJ(?:[A-Za-z0-9_-]{74}|[A-Za-z0-9_-]{58})|[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20})\b`)
 	// Google API key (Maps, Firebase, GCP): "AIza" + 35 chars.
 	reGoogleAPIKey = regexp.MustCompile(`\bAIza[A-Za-z0-9_\-]{35}\b`)
+	// Google OAuth 2.0 access token — "ya29." + a long opaque body. The
+	// "ya29." prefix is unmistakable; the 50-char floor avoids snagging a
+	// bare "ya29." mention.
+	reGoogleOAuthToken = regexp.MustCompile(`\bya29\.[A-Za-z0-9_\-]{50,}`)
 	// Stripe secret / restricted keys. Publishable "pk_" keys are public
 	// by design and don't need masking.
 	reStripeKey = regexp.MustCompile(`\b(?:sk|rk)_(?:live|test|prod)_[A-Za-z0-9]{10,99}\b`)
-	// GitLab personal / project / group access tokens.
-	reGitLabToken = regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20}\b`)
+	// GitLab tokens: personal (glpat), runner (glrt), deploy (gldt),
+	// scoped/OAuth (glsoat), pipeline-trigger (glptt), cluster-agent
+	// (glagent), feed (glfeed), incoming-mail (glimt), CI/CD-build (glcbt).
+	reGitLabToken = regexp.MustCompile(`\bgl(?:pat|rt|dt|soat|ptt|agent|feed|imt|cbt)-[A-Za-z0-9_\-]{20,}\b`)
+	// Docker Hub personal access token — "dckr_pat_" + 27+ base64url.
+	reDockerHubPAT = regexp.MustCompile(`\bdckr_pat_[A-Za-z0-9_\-]{20,}\b`)
+	// Figma personal access token — "figd_" + 40+ base64url.
+	reFigmaToken = regexp.MustCompile(`\bfigd_[A-Za-z0-9_\-]{40,}\b`)
 	// npm access token — "npm_" + 36 hex chars. Real automation/publish
 	// tokens are hex-only; mixed-case tokens are legacy and rarely seen now.
 	reNpmToken = regexp.MustCompile(`\bnpm_[a-f0-9]{36}\b`)
@@ -990,7 +1025,7 @@ func validPassword(s string) bool {
 // user") is still masked through those explicit-context rules.
 func validUserLoose(s string) bool {
 	switch strings.ToLower(s) {
-	case "user", "role", "username":
+	case "user", "role", "username", "principal":
 		return false
 	}
 	return validUser(s)
@@ -1128,7 +1163,17 @@ func validSyslogHost(s string) bool {
 // masking (an external attacker IP shouldn't render in the same
 // 192.168.x space as an internal host).
 func ipScope(s string) string {
-	if ip := net.ParseIP(s); ip != nil && ip.IsPrivate() {
+	// Strip a "%zone" suffix (fe80::1%eth0) so net.ParseIP succeeds.
+	if i := strings.IndexByte(s, '%'); i >= 0 {
+		s = s[:i]
+	}
+	ip := net.ParseIP(s)
+	if ip == nil {
+		return "public"
+	}
+	// RFC1918 / ULA (IsPrivate) plus IPv6 link-local, which IsPrivate
+	// does not cover but is just as non-routable / internal.
+	if ip.IsPrivate() || ip.IsLinkLocalUnicast() {
 		return "private"
 	}
 	return "public"
@@ -1138,16 +1183,22 @@ func ipExtra(sub []string) map[string]string {
 	return map[string]string{"scope": ipScope(sub[0])}
 }
 
+// ip6Extra reads the captured IPv6 from group 1 (reIP6 anchors with a
+// boundary char in group 0).
+func ip6Extra(sub []string) map[string]string {
+	return map[string]string{"scope": ipScope(sub[1])}
+}
+
 func addrExtra(sub []string) map[string]string {
 	return map[string]string{"ip": sub[1], "port": sub[2], "scope": ipScope(sub[1])}
 }
 
-// wellKnownPublicIPs are public DNS / anycast resolver addresses that are
-// global constants, not PII — same reasoning as the protectedValues domain
-// allowlist (docker.io, github.com). Masking "8.8.8.8" to a fake just
-// strips context the AI needs ("query to Google DNS failed" is signal).
-// Keys are canonical net.IP.String() form so textual IPv6 variants match.
-var wellKnownPublicIPs = map[string]bool{
+// wellKnownIPs are addresses that are infrastructure constants, not PII —
+// same reasoning as the protectedValues domain allowlist (docker.io,
+// github.com). Masking "8.8.8.8" to a fake just strips context the AI
+// needs ("query to Google DNS failed" is signal). Keys are canonical
+// net.IP.String() form so textual IPv6 variants match.
+var wellKnownIPs = map[string]bool{
 	// Google Public DNS
 	"8.8.8.8": true, "8.8.4.4": true,
 	// Cloudflare (1.1.1.1, plus family/malware-blocking variants)
@@ -1166,6 +1217,16 @@ var wellKnownPublicIPs = map[string]bool{
 	"2001:4860:4860::8888": true, "2001:4860:4860::8844": true, // Google
 	"2606:4700:4700::1111": true, "2606:4700:4700::1001": true, // Cloudflare
 	"2620:fe::fe": true, "2620:fe::9": true, // Quad9
+	// Kubernetes default service-CIDR anchors. These are private-range
+	// IPs but fixed by convention (not tenant-specific): the API server is
+	// always .0.1 and CoreDNS/kube-dns .0.10 of the service CIDR. Only the
+	// stock kubeadm (10.96.0.0/12) and k3s (10.43.0.0/16) defaults are
+	// listed; a cluster with a custom service-CIDR won't match, which is
+	// fine — those addresses are then genuinely site-specific and masking
+	// them is correct. Masking the default API/DNS IPs only strips the
+	// "pod talking to the API server" context.
+	"10.96.0.1": true, "10.96.0.10": true, // kubeadm default
+	"10.43.0.1": true, "10.43.0.10": true, // k3s default
 }
 
 func validIPv4(s string) bool {
@@ -1179,7 +1240,7 @@ func validIPv4(s string) bool {
 	if ip.IsUnspecified() || ip.IsLoopback() {
 		return false
 	}
-	if wellKnownPublicIPs[ip.String()] {
+	if wellKnownIPs[ip.String()] {
 		return false
 	}
 	if v4[0] == 255 && v4[1] == 255 && v4[2] == 255 && v4[3] == 255 {
@@ -1205,7 +1266,7 @@ func validIPv6(s string) bool {
 	if ip.IsUnspecified() || ip.IsLoopback() {
 		return false
 	}
-	if wellKnownPublicIPs[ip.String()] {
+	if wellKnownIPs[ip.String()] {
 		return false
 	}
 	// Ultra-short forms like "e::", "ca::", "1::1" are technically valid
@@ -1366,11 +1427,14 @@ func coreRules() []Rule {
 		{Kind: KindAPIKey, Re: reAWSAccessKey},
 		{Kind: KindAPIKey, Re: reGitHubToken},
 		{Kind: KindAPIKey, Re: reGitHubFineGrainedPAT, Keyword: "github_pat_", MinEntropy: 3.0},
-		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "glpat-"},
+		{Kind: KindAPIKey, Re: reGitLabToken, Keyword: "gl"},
 		{Kind: KindAPIKey, Re: reSlackToken, Keyword: "xox"},
 		{Kind: KindAPIKey, Re: reAnthropicKey, Keyword: "sk-ant-"},
 		{Kind: KindAPIKey, Re: reOpenAIKey, Keyword: "T3BlbkFJ"},
 		{Kind: KindAPIKey, Re: reGoogleAPIKey, Keyword: "AIza"},
+		{Kind: KindAPIKey, Re: reGoogleOAuthToken, Keyword: "ya29."},
+		{Kind: KindAPIKey, Re: reDockerHubPAT, Keyword: "dckr_pat_"},
+		{Kind: KindAPIKey, Re: reFigmaToken, Keyword: "figd_"},
 		{Kind: KindAPIKey, Re: reNpmToken, Keyword: "npm_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reHFToken, Keyword: "hf_", MinEntropy: 3.0},
 		{Kind: KindAPIKey, Re: reDatabricksToken, Keyword: "dapi", MinEntropy: 3.0},
@@ -1446,6 +1510,7 @@ func coreRules() []Rule {
 		// before the bare "as <word>" rule can grab the keyword "user".
 		{Kind: KindUser, Re: reUserAsKeyword, CaptureGroup: 1, Validate: validUser},
 		{Kind: KindUser, Re: reUserRoleQuoted, CaptureGroup: 1, Validate: validUser},
+		{Kind: KindSID, Re: reSID, Keyword: "S-1-5-21"},
 		{Kind: KindUUID, Re: reUUID},
 		{Kind: KindCard, Re: reCreditCard, Validate: validCard},
 		{Kind: KindPhone, Re: rePhoneE164, Validate: validPhone},
@@ -1454,7 +1519,7 @@ func coreRules() []Rule {
 		{Kind: KindAddr, Re: reAddr, ExtraFn: addrExtra, Validate: validAddr},
 		{Kind: KindMAC, Re: reMAC},
 		{Kind: KindIP, Re: reIP, Validate: validIPv4, ExtraFn: ipExtra},
-		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6},
+		{Kind: KindIP6, Re: reIP6, CaptureGroup: 1, Validate: validIPv6, ExtraFn: ip6Extra},
 	}
 }
 

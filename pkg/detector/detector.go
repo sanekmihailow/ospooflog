@@ -53,6 +53,9 @@ const (
 	// KindPhone covers phone numbers in E.164 form and keyword-anchored
 	// shapes ("phone: 555-1234").
 	KindPhone EntityKind = "PHONE"
+	// KindSID covers Windows security identifiers for domain/local accounts
+	// (S-1-5-21-<domain>-<rid>) — uniquely identifies a principal.
+	KindSID EntityKind = "SID"
 	// KindOverride tags pairs from --overrides applied as literal sed-style
 	// substitutions, independent of any detector rule.
 	KindOverride EntityKind = "OVR"
@@ -149,8 +152,7 @@ func (c *Chain) Find(text string) []Match {
 			continue
 		}
 		idxs := rule.Re.FindAllStringSubmatchIndex(text, -1)
-		subs := rule.Re.FindAllStringSubmatch(text, -1)
-		for i, idx := range idxs {
+		for _, idx := range idxs {
 			cg := rule.CaptureGroup
 			startIdx, endIdx := 2*cg, 2*cg+1
 			if endIdx >= len(idx) || idx[startIdx] < 0 {
@@ -200,7 +202,7 @@ func (c *Chain) Find(text string) []Match {
 
 			var extra map[string]string
 			if rule.ExtraFn != nil {
-				extra = rule.ExtraFn(subs[i])
+				extra = rule.ExtraFn(submatchStrings(text, idx))
 			}
 
 			results = append(results, Match{
@@ -215,6 +217,22 @@ func (c *Chain) Find(text string) []Match {
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Start < results[j].Start })
 	return results
+}
+
+// submatchStrings reconstructs the []string submatch slice (exactly what
+// Re.FindStringSubmatch would return) from one FindAllStringSubmatchIndex
+// entry. Lets Find skip the second full regex pass that
+// FindAllStringSubmatch would cost, building the few ExtraFn rules' groups
+// by slicing the original text instead. A negative start (unmatched
+// optional group) yields "", matching the regexp package's own behaviour.
+func submatchStrings(text string, idx []int) []string {
+	out := make([]string, len(idx)/2)
+	for k := range out {
+		if s := idx[2*k]; s >= 0 {
+			out[k] = text[s:idx[2*k+1]]
+		}
+	}
+	return out
 }
 
 // placeholderPatterns reject captures that are obvious stand-ins rather than
