@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
+	"regexp/syntax"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -50,8 +52,46 @@ type opts struct {
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
-		os.Exit(1)
+		os.Exit(exitCode(err))
 	}
+}
+
+// exitError tags an error with an explicit process exit code, for the cases the
+// standard error types below can't classify (e.g. an override pattern rejected
+// at load — not a compile error, so not a *syntax.Error).
+type exitError struct {
+	code int
+	err  error
+}
+
+func (e *exitError) Error() string { return e.err.Error() }
+func (e *exitError) Unwrap() error { return e.err }
+
+// ruleErr marks err as a detection-rule problem (exit code 3).
+func ruleErr(err error) error { return &exitError{code: 3, err: err} }
+
+// exitCode maps a run() error to a documented process code so scripts/CI can
+// branch on the failure class:
+//
+//	1 — bad arguments / config (the default: flag parse, --mode, malformed YAML)
+//	2 — I/O failure: os file ops return *fs.PathError on open/read/write/create
+//	3 — bad detection rule: a user-supplied regex that won't compile
+//	    (--overrides re:, --ignore re:) is a *regexp/syntax.Error; a pattern
+//	    rejected at load is wrapped via ruleErr
+func exitCode(err error) int {
+	var ee *exitError
+	if errors.As(err, &ee) {
+		return ee.code
+	}
+	var se *syntax.Error
+	if errors.As(err, &se) {
+		return 3
+	}
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return 2
+	}
+	return 1
 }
 
 func run(args []string) error {
@@ -382,12 +422,12 @@ func loadOverrides(path string) ([]overrideRule, error) {
 		}
 		re, err := regexp.Compile(pat)
 		if err != nil {
-			return nil, fmt.Errorf("%s: overrides[%d]: bad regex %q: %w", path, i, pat, err)
+			return nil, ruleErr(fmt.Errorf("%s: overrides[%d]: bad regex %q: %w", path, i, pat, err))
 		}
 		// An empty-matching pattern (".*", "a*") would splatter placeholders
 		// at every position via ReplaceAllString — reject it with a clear note.
 		if re.MatchString("") {
-			return nil, fmt.Errorf("%s: overrides[%d]: regex %q matches the empty string — use a more specific pattern", path, i, pat)
+			return nil, ruleErr(fmt.Errorf("%s: overrides[%d]: regex %q matches the empty string — use a more specific pattern", path, i, pat))
 		}
 		out = append(out, overrideRule{re: re, replace: r.Replace})
 	}

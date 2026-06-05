@@ -640,6 +640,48 @@ func TestOverrides_RegexEmptyMatchRejected(t *testing.T) {
 	}
 }
 
+// TestExitCodes drives run() to a failure and checks the documented code class:
+// 1 argument/config, 2 I/O, 3 bad detection rule (regex).
+func TestExitCodes(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, content string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	goodLog := write("log.txt", "user1 user42")
+	badOverrides := write("bad-re.yaml", "overrides:\n  - origin: \"re:[bad\"\n    replace: X\n")
+	emptyOverrides := write("empty-re.yaml", "overrides:\n  - origin: \"re:.*\"\n    replace: X\n")
+	badIgnore := write("bad-ignore.txt", "re:[bad\n")
+	out := filepath.Join(dir, "out")
+	sess := filepath.Join(dir, "s.json")
+
+	cases := []struct {
+		name string
+		args []string
+		want int
+	}{
+		{"unknown-mode", []string{"-i", goodLog, "-o", out, "-s", sess, "--mode", "yolo", "obfuscate"}, 1},
+		{"missing-input", []string{"-i", filepath.Join(dir, "nope.txt"), "-o", out, "-s", sess, "obfuscate"}, 2},
+		{"bad-overrides-regex", []string{"-i", goodLog, "-o", out, "-s", sess, "--overrides", badOverrides, "obfuscate"}, 3},
+		{"empty-overrides-regex", []string{"-i", goodLog, "-o", out, "-s", sess, "--overrides", emptyOverrides, "obfuscate"}, 3},
+		{"bad-ignore-regex", []string{"-i", goodLog, "-o", out, "-s", sess, "--ignore", badIgnore, "obfuscate"}, 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := run(tc.args)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if got := exitCode(err); got != tc.want {
+				t.Errorf("exitCode = %d, want %d (err: %v)", got, tc.want, err)
+			}
+		})
+	}
+}
+
 func TestIgnore_LiteralAndRegexBothApplied(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "log.txt")
