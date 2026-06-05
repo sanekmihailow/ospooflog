@@ -200,7 +200,7 @@ ospooflog -s session.json show
 ```
   -i, --input        input file (default: stdin)
   -o, --output       output file (default: stdout)
-  -s, --session      session file (required)
+  -s, --session      session file (default: /tmp/ospooflog_session.json)
 
   --mode             detection breadth: safe (default) | balanced |
                      aggressive. Higher levels catch more, with higher

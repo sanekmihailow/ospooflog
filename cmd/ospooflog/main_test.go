@@ -763,6 +763,15 @@ func TestCut_MultilineBlock(t *testing.T) {
 	}
 }
 
+func TestSessionPath_DefaultWhenOmitted(t *testing.T) {
+	if got := sessionPath(""); got != defaultSessionPath {
+		t.Errorf("omitted -s: got %q, want %q", got, defaultSessionPath)
+	}
+	if got := sessionPath("/custom/s.json"); got != "/custom/s.json" {
+		t.Errorf("explicit -s should win: got %q", got)
+	}
+}
+
 func TestIgnore_LiteralAndRegexBothApplied(t *testing.T) {
 	dir := t.TempDir()
 	logFile := filepath.Join(dir, "log.txt")

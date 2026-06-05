@@ -29,10 +29,24 @@ import (
 	"github.com/sanekmihailow/ospooflog/pkg/session"
 )
 
+// defaultSessionPath is used when -s is omitted. /tmp keeps throwaway
+// obfuscate→restore sessions out of the working tree.
+const defaultSessionPath = "/tmp/ospooflog_session.json"
+
+// sessionPath resolves the session file: the -s flag wins, otherwise the
+// built-in default. Kept as a seam so a future config file can slot a value
+// between the flag and the default.
+func sessionPath(flag string) string {
+	if flag == "" {
+		return defaultSessionPath
+	}
+	return flag
+}
+
 type opts struct {
 	Input         string `short:"i" long:"input" description:"input file (default: stdin)"`
 	Output        string `short:"o" long:"output" description:"output file (default: stdout)"`
-	Session       string `short:"s" long:"session" description:"session file (required)" required:"true"`
+	Session       string `short:"s" long:"session" description:"session file (default: /tmp/ospooflog_session.json)"`
 	Mode          string `long:"mode" description:"detection breadth — safe: strict context only | balanced: + 'as alice' / abs paths / bare ports | aggressive: + single-label HOST / base64 decode-verify" default:"safe"`
 	Aggressive    bool   `long:"aggressive" description:"deprecated alias for --mode aggressive"`
 	FastRestore   bool   `long:"fast-restore" description:"opt out of word-boundary aware restore — faster, but a registered fake that's a prefix of an unrelated string in the AI response will be wrongly replaced"`
@@ -108,6 +122,8 @@ func run(args []string) error {
 	if parser.Active == nil {
 		return errors.New("command required: obfuscate | restore | show")
 	}
+
+	o.Session = sessionPath(o.Session)
 
 	if o.StrictRestore {
 		fmt.Fprintln(os.Stderr, "warning: --strict-restore is deprecated — strict restore is now the default; pass --fast-restore to opt out")
