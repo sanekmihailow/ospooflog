@@ -41,6 +41,7 @@ type opts struct {
 	Diff          bool   `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
 	Overrides     string `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
 	Ignore        string `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
+	Cut           string `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
 	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
 	Dbg           bool   `long:"dbg" description:"debug logging on stderr (session load count, match dumps in dry-run)"`
@@ -184,6 +185,15 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	text, err := readInput(o.Input)
 	if err != nil {
 		return err
+	}
+	// Cut first: drop whole lines a pattern touches so they reach neither the
+	// detector nor the --diff baseline (originalText) below.
+	if o.Cut != "" {
+		cl, err := loadCutList(o.Cut)
+		if err != nil {
+			return fmt.Errorf("cut: %w", err)
+		}
+		text = cl.Apply(text)
 	}
 	originalText := text
 
