@@ -55,6 +55,7 @@ type opts struct {
 	StrictRestore bool     `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
 	DryRun        bool     `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
 	Diff          bool     `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
+	Explain       bool     `long:"explain" description:"obfuscate: print per-value detector decisions to stderr (MASK / drop + reason) to analyze why values are or aren't masked"`
 	Overrides     string   `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
 	Ignore        string   `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
 	Cut           string   `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
@@ -233,6 +234,15 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	var stats detector.FindStats
 	if dbg.on(8) {
 		chain.SetStats(&stats)
+	}
+	if o.Explain {
+		chain.SetExplain(func(d detector.Decision) {
+			if d.Masked {
+				fmt.Fprintf(os.Stderr, "explain: MASK [%s] @%d %q\n", d.Kind, d.Start, d.Value)
+				return
+			}
+			fmt.Fprintf(os.Stderr, "explain: drop [%s] @%d %q — %s\n", d.Kind, d.Start, d.Value, d.Reason)
+		})
 	}
 	if o.Ignore != "" {
 		il, err := detector.LoadIgnoreList(o.Ignore)

@@ -217,6 +217,9 @@ ospooflog -s session.json show
   --diff             obfuscate: print a per-line diff of original vs
                      obfuscated text instead of the result; does not persist
                      the session (mutually exclusive with --dry-run).
+  --explain          obfuscate: print per-value detector decisions to stderr
+                     (MASK / drop + reason) to analyze why values are or
+                     aren't masked.
   --overrides path   YAML file with origin → replace pairs that win over the
                      built-in templates; a literal origin matches verbatim,
                      `origin: re:<pattern>` matches a class by Go regexp.
@@ -356,6 +359,25 @@ debug_out: ./prof           # --debug-out directory
 
 Precedence is **flag > project config > user config > built-in default**. A
 missing config file is ignored; a malformed one is an error (exit code 1).
+
+## Explaining detection
+
+`--explain` reports, for each value a rule matched, whether it was masked or
+dropped and why — to debug coverage (a value you expected masked that wasn't, or
+the reverse). Like `--debug` it writes to **stderr**, so the obfuscated result on
+stdout is unaffected.
+
+```sh
+printf 'login password=changeme from 10.0.0.1\n' | ospooflog --explain obfuscate >/dev/null
+# explain: drop [PWD] @15 "changeme" — placeholder
+# explain: MASK [IP] @29 "10.0.0.1"
+```
+
+Drop reasons map to the detector's value filters: `validate rejected`,
+`low entropy (…)`, `placeholder`, `protected value`, `ignored (--ignore)`,
+`not valid base64` / `decoded base64 has no credential`, `skip rule`. A value no
+rule matched isn't listed (there's no decision to report), and one already
+claimed by an earlier rule isn't re-reported.
 
 ## Debug levels
 
