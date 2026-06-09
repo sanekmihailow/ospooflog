@@ -61,6 +61,29 @@ func TestFindStats_Counts(t *testing.T) {
 	}
 }
 
+func TestExplain_Decisions(t *testing.T) {
+	chain := detector.New(detector.DefaultRules())
+	var ds []detector.Decision
+	chain.SetExplain(func(d detector.Decision) { ds = append(ds, d) })
+	chain.Find("password=changeme from 10.0.0.1")
+
+	var maskedIP, droppedPlaceholder bool
+	for _, d := range ds {
+		if d.Masked && d.Value == "10.0.0.1" {
+			maskedIP = true
+		}
+		if !d.Masked && d.Value == "changeme" && strings.Contains(d.Reason, "placeholder") {
+			droppedPlaceholder = true
+		}
+	}
+	if !maskedIP {
+		t.Errorf("expected a MASK decision for the IP; got %+v", ds)
+	}
+	if !droppedPlaceholder {
+		t.Errorf("expected 'changeme' dropped as placeholder; got %+v", ds)
+	}
+}
+
 // TestDebugOut_WritesArtifacts drives --debug-out and checks the binary Go
 // artifacts land in the directory, non-empty.
 func TestDebugOut_WritesArtifacts(t *testing.T) {

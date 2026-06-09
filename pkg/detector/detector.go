@@ -8,6 +8,7 @@ package detector
 
 import (
 	"encoding/base64"
+	"fmt"
 	"math"
 	"regexp"
 	"sort"
@@ -119,9 +120,22 @@ type Chain struct {
 	// inner is the rules slice with DecodeBase64 rules stripped. Used to
 	// scan decoded base64 payloads without recursing back through them.
 	// Built eagerly in New so Find is safe for concurrent use.
-	inner  *Chain
-	ignore *IgnoreList
-	stats  *FindStats
+	inner   *Chain
+	ignore  *IgnoreList
+	stats   *FindStats
+	explain func(Decision)
+}
+
+// Decision is one per-candidate outcome reported to the --explain sink: a value
+// a rule matched, and whether it was masked or dropped (with the reason). Range
+// overlaps with an earlier match are not reported — that value was already
+// masked, so it's not a "why didn't this mask" case.
+type Decision struct {
+	Start, End int
+	Value      string
+	Kind       EntityKind // the rule whose regex matched
+	Masked     bool       // true = emitted; false = dropped (see Reason)
+	Reason     string     // for Masked=false: which filter rejected it
 }
 
 // FindStats accumulates aggregate detector activity for --debug level 8. When a
@@ -174,6 +188,23 @@ func (c *Chain) SetStats(s *FindStats) {
 	}
 }
 
+// SetExplain installs a per-candidate decision sink (for --explain). The inner
+// base64 chain shares it so decoded-payload decisions surface too. Pass nil to
+// disable.
+func (c *Chain) SetExplain(fn func(Decision)) {
+	c.explain = fn
+	if c.inner != nil {
+		c.inner.explain = fn
+	}
+}
+
+// decide reports one candidate outcome to the explain sink (no-op when unset).
+func (c *Chain) decide(start, end int, value string, kind EntityKind, masked bool, reason string) {
+	if c.explain != nil {
+		c.explain(Decision{Start: start, End: end, Value: value, Kind: kind, Masked: masked, Reason: reason})
+	}
+}
+
 type interval struct{ start, end int }
 
 // Find returns all non-overlapping matches in text, sorted by start offset.
@@ -217,33 +248,41 @@ func (c *Chain) Find(text string) []Match {
 
 			value := text[start:end]
 			if rule.Validate != nil && !rule.Validate(value) {
+				c.decide(start, end, value, rule.Kind, false, "validate rejected")
 				continue
 			}
 			if rule.MinEntropy > 0 && shannonEntropy(value) < rule.MinEntropy {
+				c.decide(start, end, value, rule.Kind, false, fmt.Sprintf("low entropy (%.1f < %.1f)", shannonEntropy(value), rule.MinEntropy))
 				continue
 			}
 			if isPlaceholder(value) {
+				c.decide(start, end, value, rule.Kind, false, "placeholder")
 				continue
 			}
 			if isProtectedValue(value) {
+				c.decide(start, end, value, rule.Kind, false, "protected value")
 				continue
 			}
 			if c.ignore.Match(value) {
+				c.decide(start, end, value, rule.Kind, false, "ignored (--ignore)")
 				continue
 			}
 
 			if rule.DecodeBase64 {
 				decoded, ok := tryB64Decode(value)
 				if !ok {
+					c.decide(start, end, value, rule.Kind, false, "not valid base64")
 					continue
 				}
 				if !innerHasSensitive(c.inner.Find(string(decoded))) {
+					c.decide(start, end, value, rule.Kind, false, "decoded base64 has no credential")
 					continue
 				}
 			}
 
 			if rule.Skip {
 				covered = append(covered, interval{blockStart, blockEnd})
+				c.decide(start, end, value, rule.Kind, false, "skip rule (preserved verbatim)")
 				continue
 			}
 
@@ -263,6 +302,7 @@ func (c *Chain) Find(text string) []Match {
 			if c.stats != nil {
 				c.stats.Emitted++
 			}
+			c.decide(start, end, value, rule.Kind, true, "")
 		}
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Start < results[j].Start })
