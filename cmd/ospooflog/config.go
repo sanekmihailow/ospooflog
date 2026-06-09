@@ -23,6 +23,7 @@ type config struct {
 	DebugOut    string `yaml:"debug_out"`
 	FastRestore *bool  `yaml:"fast_restore"`
 	JSON        *bool  `yaml:"json"`
+	KeepTLD     *bool  `yaml:"keep_tld"`
 	Debug       *int   `yaml:"debug"`
 }
 
@@ -100,6 +101,9 @@ func (c *config) overlay(o config) {
 	if o.JSON != nil {
 		c.JSON = o.JSON
 	}
+	if o.KeepTLD != nil {
+		c.KeepTLD = o.KeepTLD
+	}
 	if o.Debug != nil {
 		c.Debug = o.Debug
 	}
@@ -135,6 +139,9 @@ func (c config) applyTo(o *opts) {
 	}
 	if !o.JSON && c.JSON != nil {
 		o.JSON = *c.JSON
+	}
+	if !o.KeepTLD && c.KeepTLD != nil {
+		o.KeepTLD = *c.KeepTLD
 	}
 	if o.Debug == 0 && c.Debug != nil {
 		o.Debug = *c.Debug

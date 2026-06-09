@@ -70,3 +70,44 @@ func TestGenerate_PortCycles(t *testing.T) {
 		t.Errorf("port should wrap: n=1 %q vs n=7 %q", got1, got7)
 	}
 }
+
+func TestKeepTLD_PreservesTLDAndCountsDomains(t *testing.T) {
+	r := New()
+	r.SetKeepTLD(true)
+	origin := func(s string) map[string]string { return map[string]string{"_origin": s} }
+
+	cases := []struct {
+		kind detector.EntityKind
+		n    int
+		in   string
+		want string
+	}{
+		{detector.KindFQDN, 1, "messenger.max.ru", "service1.example1.ru"},
+		{detector.KindFQDN, 2, "api.vk.ru", "service2.example2.ru"},
+		{detector.KindFQDN, 3, "chat.max.ru", "service3.example1.ru"},   // same registrable domain → same exampleN
+		{detector.KindEmail, 1, "alice@max.ru", "user1@example1.ru"},    // domain shared with the FQDNs above
+		{detector.KindFQDN, 5, "max.ru", "example1.ru"},                 // 2 labels: no subdomain
+		{detector.KindHost, 6, "db-prod.internal", "example3.internal"}, // 2 labels too
+	}
+	for _, c := range cases {
+		if got := r.Generate(c.kind, c.n, origin(c.in)); got != c.want {
+			t.Errorf("Generate(%s, %d, %q) = %q, want %q", c.kind, c.n, c.in, got, c.want)
+		}
+	}
+}
+
+func TestKeepTLD_OffUsesDefaultTemplate(t *testing.T) {
+	r := New() // keep-tld off
+	if got := r.Generate(detector.KindFQDN, 1, map[string]string{"_origin": "messenger.max.ru"}); got != "service1.example.com" {
+		t.Errorf("default FQDN template changed: %q", got)
+	}
+}
+
+func TestKeepTLD_SingleLabelFallsBack(t *testing.T) {
+	r := New()
+	r.SetKeepTLD(true)
+	// No dot → no TLD to preserve → fall back to the HOST template.
+	if got := r.Generate(detector.KindHost, 1, map[string]string{"_origin": "db-prod"}); got != "myhost1.local" {
+		t.Errorf("single-label host should fall back to template: %q", got)
+	}
+}
