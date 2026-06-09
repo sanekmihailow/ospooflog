@@ -230,7 +230,10 @@ ospooflog -s session.json show
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
-  --debug            debug logging on stderr.
+  --debug=N          debug trace verbosity on stderr, 1-10 (cumulative;
+                     off when omitted). See "Debug levels" below.
+  --debug-out dir    write binary Go artifacts to dir: runtime/trace +
+                     CPU/heap pprof (read with go tool trace / pprof).
 ```
 
 ## Examples
@@ -347,11 +350,36 @@ overrides: ./ovr.yaml       # --overrides file
 cut: ./.ospoof-cut          # --cut file
 fast_restore: false         # --fast-restore
 json: false                 # --json
-debug: false                # --debug
+debug: 5                    # --debug verbosity 1-10 (omit for off)
+debug_out: ./prof           # --debug-out directory
 ```
 
 Precedence is **flag > project config > user config > built-in default**. A
 missing config file is ignored; a malformed one is an error (exit code 1).
+
+## Debug levels
+
+`--debug=N` prints a cumulative trace to **stderr** (never stdout — that carries
+the obfuscated result). Omitting `--debug` is off. Each level adds detail on top
+of the previous:
+
+| N | adds |
+|---|------|
+| 1 | config files loaded, effective `mode`/`session` |
+| 2 | all effective options after the flag/config merge |
+| 3 | active ruleset size (`mode → N rules`) |
+| 4 | session load/save (paths + entry counts) |
+| 5 | overrides / ignore / cut loads |
+| 6 | pipeline stage transitions |
+| 7 | per-stage timings |
+| 8 | detector internals (rules evaluated, prefilter skips, candidates, emitted) |
+| 9 | Go caller `file:line` on every line + goroutine stack on error |
+| 10 | Go runtime stats (mem, goroutines, GC) at exit |
+
+Panics always print a full stack regardless of level. For deep profiling,
+`--debug-out <dir>` writes a `runtime/trace` and CPU/heap pprof into `<dir>`
+(`go tool trace <dir>/ospooflog.trace`, `go tool pprof <dir>/ospooflog.cpu.pprof`)
+— independent of the text verbosity level.
 
 ## Session file
 

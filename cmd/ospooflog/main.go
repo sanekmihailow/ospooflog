@@ -12,9 +12,11 @@ import (
 	"os"
 	"regexp"
 	"regexp/syntax"
+	rtdebug "runtime/debug"
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	flags "github.com/jessevdk/go-flags"
 	"gopkg.in/yaml.v3"
@@ -58,15 +60,28 @@ type opts struct {
 	Cut           string   `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
 	JSON          bool     `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string   `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
-	Debug         bool     `long:"debug" description:"debug logging on stderr (session load count, match dumps in dry-run)"`
+	Debug         int      `long:"debug" description:"debug trace verbosity on stderr, 1-10 (cumulative: 1 config/options, 4 session, 6 stages, 7 timings, 8 detector internals, 9 +caller/stack, 10 +runtime stats); off when omitted"`
+	DebugOut      string   `long:"debug-out" description:"directory for binary Go artifacts at high verbosity: runtime/trace + CPU/heap pprof (read with go tool trace / pprof)"`
 	Obfuscate     struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes, persist the mapping to the session file"`
 	Restore       struct{} `command:"restore" description:"reverse pass — restore originals in an AI response using the session file"`
 	Show          struct{} `command:"show" description:"print the current session mapping as a TOKEN/KIND/ORIGIN/REPLACE table"`
 }
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "panic: %v\n%s", r, rtdebug.Stack())
+			os.Exit(1)
+		}
+	}()
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
+		// Cheap stack on error at high verbosity (shallow — main's goroutine,
+		// not the error's origin; the accepted trade-off for not wrapping every
+		// error site). Panics get a real stack via the recover above.
+		if dbg.on(dbgCaller) {
+			fmt.Fprintf(os.Stderr, "%s", rtdebug.Stack())
+		}
 		os.Exit(exitCode(err))
 	}
 }
@@ -123,6 +138,10 @@ func run(args []string) error {
 		return errors.New("command required: obfuscate | restore | show")
 	}
 
+	// Tracer at the flag level first so config discovery itself can be traced;
+	// the effective level (config may raise it) is set right after the merge.
+	dbg = &debugLog{level: o.Debug, w: os.Stderr}
+
 	// Config file fills options the flags left unset (flag > config > default),
 	// then the built-in fallbacks for what neither set.
 	cfg, err := loadConfig()
@@ -134,6 +153,11 @@ func run(args []string) error {
 	if o.Mode == "" {
 		o.Mode = "safe"
 	}
+	dbg.level = o.Debug
+
+	dbg.at(1, "effective: mode=%s session=%s", o.Mode, o.Session)
+	dbg.at(2, "effective: json=%v fast_restore=%v allow_keys=%q ignore=%q overrides=%q cut=%q debug_out=%q",
+		o.JSON, o.FastRestore, o.AllowKeys, o.Ignore, o.Overrides, o.Cut, o.DebugOut)
 
 	if o.StrictRestore {
 		fmt.Fprintln(os.Stderr, "warning: --strict-restore is deprecated — strict restore is now the default; pass --fast-restore to opt out")
@@ -143,6 +167,8 @@ func run(args []string) error {
 	if err := session.Load(o.Session, m); err != nil {
 		return fmt.Errorf("session load: %w", err)
 	}
+	dbg.at(4, "session: loaded %d entries from %s", len(m.Entries()), o.Session)
+
 	var ov []overrideRule
 	if o.Overrides != "" {
 		var err error
@@ -151,12 +177,7 @@ func run(args []string) error {
 			return fmt.Errorf("overrides: %w", err)
 		}
 		m.SetOverrides(overrideLiterals(ov))
-		if o.Debug {
-			fmt.Fprintf(os.Stderr, "debug: loaded %d overrides from %s\n", len(ov), o.Overrides)
-		}
-	}
-	if o.Debug {
-		fmt.Fprintf(os.Stderr, "debug: loaded %d entries from %s\n", len(m.Entries()), o.Session)
+		dbg.at(5, "overrides: %d rules from %s", len(ov), o.Overrides)
 	}
 
 	switch parser.Active.Name {
@@ -195,17 +216,31 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	if o.DryRun && o.Diff {
 		return errors.New("--diff and --dry-run are mutually exclusive")
 	}
+	defer dbg.runtimeStats()
+	if o.DebugOut != "" {
+		stop, err := startProfiling(o.DebugOut)
+		if err != nil {
+			return fmt.Errorf("debug-out: %w", err)
+		}
+		defer stop()
+	}
 	rules, err := rulesForMode(o.Mode, o.Aggressive)
 	if err != nil {
 		return err
 	}
+	dbg.at(3, "ruleset: mode=%s → %d rules", o.Mode, len(rules))
 	chain := detector.New(rules)
+	var stats detector.FindStats
+	if dbg.on(8) {
+		chain.SetStats(&stats)
+	}
 	if o.Ignore != "" {
 		il, err := detector.LoadIgnoreList(o.Ignore)
 		if err != nil {
 			return fmt.Errorf("ignore: %w", err)
 		}
 		chain.SetIgnore(il)
+		dbg.at(5, "ignore: loaded from %s", o.Ignore)
 	}
 
 	text, err := readInput(o.Input)
@@ -220,6 +255,7 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 			return fmt.Errorf("cut: %w", err)
 		}
 		text = cl.Apply(text)
+		dbg.at(5, "cut: applied from %s", o.Cut)
 	}
 	originalText := text
 
@@ -289,6 +325,12 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	}
 
 	obf := obfuscator.New(chain, m)
+	stage := "plain"
+	if o.JSON {
+		stage = "json"
+	}
+	dbg.at(6, "stage: detect+obfuscate (%s)", stage)
+	t0 := time.Now()
 	var result string
 	if o.JSON {
 		result = jsonproc.New(obf, m, splitCSV(o.AllowKeys)).Process(text)
@@ -296,6 +338,9 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 		text = audithex.Process(text, obf)
 		result = obf.Obfuscate(text)
 	}
+	dbg.at(7, "timing: obfuscate %s", time.Since(t0))
+	dbg.at(8, "detector: %d rules evaluated, %d prefilter-skipped, %d candidates, %d emitted",
+		stats.RulesEvaluated, stats.PrefilterSkip, stats.Candidates, stats.Emitted)
 	for i, s := range ovSlots {
 		result = strings.ReplaceAll(result, fmt.Sprintf("\x00OVR%d\x00", i), s.replace)
 	}
@@ -308,9 +353,7 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	if err := session.Save(o.Session, m); err != nil {
 		return fmt.Errorf("session save: %w", err)
 	}
-	if o.Debug {
-		fmt.Fprintf(os.Stderr, "debug: session has %d entries after obfuscate\n", len(m.Entries()))
-	}
+	dbg.at(4, "session: saved %d entries to %s", len(m.Entries()), o.Session)
 	return nil
 }
 
