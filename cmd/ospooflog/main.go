@@ -56,6 +56,7 @@ type opts struct {
 	DryRun        bool     `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
 	Diff          bool     `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
 	Explain       bool     `long:"explain" description:"obfuscate: print per-value detector decisions to stderr (MASK / drop + reason) to analyze why values are or aren't masked"`
+	Valid         bool     `long:"valid" description:"parse-check the config and the --overrides / --ignore / --cut files and --mode for syntax errors, then exit (no command needed, no obfuscation)"`
 	Overrides     string   `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
 	Ignore        string   `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
 	Cut           string   `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
@@ -129,6 +130,9 @@ func exitCode(err error) int {
 func run(args []string) error {
 	var o opts
 	parser := flags.NewParser(&o, flags.Default)
+	// Allow no subcommand at parse time so --valid (a standalone check) works;
+	// the "command required" case is still enforced manually below.
+	parser.SubcommandsOptional = true
 	if _, err := parser.ParseArgs(args); err != nil {
 		var fe *flags.Error
 		if errors.As(err, &fe) && fe.Type == flags.ErrHelp {
@@ -136,10 +140,6 @@ func run(args []string) error {
 		}
 		return errors.New("invalid arguments")
 	}
-	if parser.Active == nil {
-		return errors.New("command required: obfuscate | restore | show")
-	}
-
 	// Tracer at the flag level first so config discovery itself can be traced;
 	// the effective level (config may raise it) is set right after the merge.
 	dbg = &debugLog{level: o.Debug, w: os.Stderr}
@@ -160,6 +160,16 @@ func run(args []string) error {
 	dbg.at(1, "effective: mode=%s session=%s", o.Mode, o.Session)
 	dbg.at(2, "effective: json=%v fast_restore=%v allow_keys=%q ignore=%q overrides=%q cut=%q debug_out=%q",
 		o.JSON, o.FastRestore, o.AllowKeys, o.Ignore, o.Overrides, o.Cut, o.DebugOut)
+
+	// --valid: parse-check config + the --overrides / --ignore / --cut files
+	// and --mode, then stop (no command required, no obfuscation).
+	if o.Valid {
+		return validate(o)
+	}
+
+	if parser.Active == nil {
+		return errors.New("command required: obfuscate | restore | show")
+	}
 
 	if o.StrictRestore {
 		fmt.Fprintln(os.Stderr, "warning: --strict-restore is deprecated — strict restore is now the default; pass --fast-restore to opt out")
@@ -194,6 +204,37 @@ func run(args []string) error {
 	default:
 		return fmt.Errorf("unknown command: %s", parser.Active.Name)
 	}
+}
+
+// validate parse-checks the configured inputs for --valid: the --overrides /
+// --ignore / --cut files and --mode. Config-file syntax was already verified by
+// loadConfig in run(). Returns the first error (carrying its exit code); on
+// success prints what was checked and returns nil (exit 0).
+func validate(o opts) error {
+	checked := []string{"config"}
+	if o.Overrides != "" {
+		if _, err := loadOverrides(o.Overrides); err != nil {
+			return fmt.Errorf("overrides: %w", err)
+		}
+		checked = append(checked, "overrides")
+	}
+	if o.Ignore != "" {
+		if _, err := detector.LoadIgnoreList(o.Ignore); err != nil {
+			return fmt.Errorf("ignore: %w", err)
+		}
+		checked = append(checked, "ignore")
+	}
+	if o.Cut != "" {
+		if _, err := loadCutList(o.Cut); err != nil {
+			return fmt.Errorf("cut: %w", err)
+		}
+		checked = append(checked, "cut")
+	}
+	if _, err := rulesForMode(o.Mode, o.Aggressive); err != nil {
+		return err
+	}
+	fmt.Printf("valid: %s, mode=%s\n", strings.Join(checked, ", "), o.Mode)
+	return nil
 }
 
 // rulesForMode picks the detector ruleset for the requested mode.

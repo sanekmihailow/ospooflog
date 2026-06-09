@@ -220,6 +220,9 @@ ospooflog -s session.json show
   --explain          obfuscate: print per-value detector decisions to stderr
                      (MASK / drop + reason) to analyze why values are or
                      aren't masked.
+  --valid            parse-check the config and the --overrides / --ignore /
+                     --cut files and --mode for syntax errors, then exit
+                     (no command needed). Exit 0 = valid.
   --overrides path   YAML file with origin → replace pairs that win over the
                      built-in templates; a literal origin matches verbatim,
                      `origin: re:<pattern>` matches a class by Go regexp.
