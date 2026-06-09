@@ -121,6 +121,17 @@ type Chain struct {
 	// Built eagerly in New so Find is safe for concurrent use.
 	inner  *Chain
 	ignore *IgnoreList
+	stats  *FindStats
+}
+
+// FindStats accumulates aggregate detector activity for --debug level 8. When a
+// Chain has a non-nil *FindStats, Find tallies into it (the inner base64 chain
+// shares the same counter). nil means no bookkeeping and no overhead.
+type FindStats struct {
+	RulesEvaluated int // rules whose regex actually ran (keyword prefilter passed)
+	PrefilterSkip  int // rules skipped because their keyword wasn't present
+	Candidates     int // regex submatches examined
+	Emitted        int // matches emitted (the rest were filtered, overlapped or skip-rules)
 }
 
 func New(rules []Rule) *Chain {
@@ -153,6 +164,16 @@ func (c *Chain) SetIgnore(l *IgnoreList) {
 	}
 }
 
+// SetStats installs a counter that Find tallies into (for --debug). The inner
+// base64 chain shares it so decoded-payload scans are counted too. Pass nil to
+// disable.
+func (c *Chain) SetStats(s *FindStats) {
+	c.stats = s
+	if c.inner != nil {
+		c.inner.stats = s
+	}
+}
+
 type interval struct{ start, end int }
 
 // Find returns all non-overlapping matches in text, sorted by start offset.
@@ -163,7 +184,13 @@ func (c *Chain) Find(text string) []Match {
 	)
 	for _, rule := range c.rules {
 		if rule.Keyword != "" && !strings.Contains(text, rule.Keyword) {
+			if c.stats != nil {
+				c.stats.PrefilterSkip++
+			}
 			continue
+		}
+		if c.stats != nil {
+			c.stats.RulesEvaluated++
 		}
 		idxs := rule.Re.FindAllStringSubmatchIndex(text, -1)
 		for _, idx := range idxs {
@@ -171,6 +198,9 @@ func (c *Chain) Find(text string) []Match {
 			startIdx, endIdx := 2*cg, 2*cg+1
 			if endIdx >= len(idx) || idx[startIdx] < 0 {
 				continue
+			}
+			if c.stats != nil {
+				c.stats.Candidates++
 			}
 			start, end := idx[startIdx], idx[endIdx]
 			// Block out the entire regex match (idx[0:2]) — not just the capture
@@ -230,6 +260,9 @@ func (c *Chain) Find(text string) []Match {
 				Extra: extra,
 			})
 			covered = append(covered, interval{blockStart, blockEnd})
+			if c.stats != nil {
+				c.stats.Emitted++
+			}
 		}
 	}
 	sort.Slice(results, func(i, j int) bool { return results[i].Start < results[j].Start })

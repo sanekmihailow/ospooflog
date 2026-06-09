@@ -11,7 +11,7 @@ func TestConfig_ProjectOverridesHome(t *testing.T) {
 	dir := t.TempDir()
 	home := filepath.Join(dir, "home.yaml")
 	proj := filepath.Join(dir, "proj.yaml")
-	if err := os.WriteFile(home, []byte("mode: safe\nsession: /home/s.json\ndebug: true\n"), 0o600); err != nil {
+	if err := os.WriteFile(home, []byte("mode: safe\nsession: /home/s.json\ndebug: 7\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(proj, []byte("mode: balanced\n"), 0o600); err != nil {
@@ -28,8 +28,8 @@ func TestConfig_ProjectOverridesHome(t *testing.T) {
 	if cfg.Session != "/home/s.json" {
 		t.Errorf("home session should survive: got %q", cfg.Session)
 	}
-	if cfg.Debug == nil || !*cfg.Debug {
-		t.Errorf("home debug=true should survive: %v", cfg.Debug)
+	if cfg.Debug == nil || *cfg.Debug != 7 {
+		t.Errorf("home debug=7 should survive: %v", cfg.Debug)
 	}
 }
 

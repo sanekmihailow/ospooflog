@@ -20,9 +20,10 @@ type config struct {
 	Ignore      string `yaml:"ignore"`
 	Overrides   string `yaml:"overrides"`
 	Cut         string `yaml:"cut"`
+	DebugOut    string `yaml:"debug_out"`
 	FastRestore *bool  `yaml:"fast_restore"`
 	JSON        *bool  `yaml:"json"`
-	Debug       *bool  `yaml:"debug"`
+	Debug       *int   `yaml:"debug"`
 }
 
 // configPaths lists config locations in increasing priority: the per-user file
@@ -49,6 +50,7 @@ func loadConfigFrom(paths []string) (config, error) {
 		}
 		if ok {
 			cfg.overlay(c)
+			dbg.at(1, "config: loaded %s", p)
 		}
 	}
 	return cfg, nil
@@ -89,6 +91,9 @@ func (c *config) overlay(o config) {
 	if o.Cut != "" {
 		c.Cut = o.Cut
 	}
+	if o.DebugOut != "" {
+		c.DebugOut = o.DebugOut
+	}
 	if o.FastRestore != nil {
 		c.FastRestore = o.FastRestore
 	}
@@ -122,13 +127,16 @@ func (c config) applyTo(o *opts) {
 	if o.Cut == "" {
 		o.Cut = c.Cut
 	}
+	if o.DebugOut == "" {
+		o.DebugOut = c.DebugOut
+	}
 	if !o.FastRestore && c.FastRestore != nil {
 		o.FastRestore = *c.FastRestore
 	}
 	if !o.JSON && c.JSON != nil {
 		o.JSON = *c.JSON
 	}
-	if !o.Debug && c.Debug != nil {
+	if o.Debug == 0 && c.Debug != nil {
 		o.Debug = *c.Debug
 	}
 }
