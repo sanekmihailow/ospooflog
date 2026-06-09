@@ -642,6 +642,32 @@ func TestOverrides_RegexEmptyMatchRejected(t *testing.T) {
 
 // TestExitCodes drives run() to a failure and checks the documented code class:
 // 1 argument/config, 2 I/O, 3 bad detection rule (regex).
+func TestValid_PassAndFail(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "empty")) // isolate from real ~/.config
+	good := filepath.Join(dir, "good.yaml")
+	bad := filepath.Join(dir, "bad.yaml")
+	if err := os.WriteFile(good, []byte("overrides:\n  - origin: alice\n    replace: bob\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bad, []byte("overrides:\n  - origin: \"re:[bad\"\n    replace: X\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid inputs: no error, and no command is required.
+	if err := run([]string{"--valid", "--overrides", good}); err != nil {
+		t.Errorf("--valid on good overrides should pass: %v", err)
+	}
+	// Bad regex: error classified as a rule problem (exit 3).
+	err := run([]string{"--valid", "--overrides", bad})
+	if err == nil {
+		t.Fatal("--valid on bad overrides should error")
+	}
+	if got := exitCode(err); got != 3 {
+		t.Errorf("bad regex via --valid should be exit 3, got %d (%v)", got, err)
+	}
+}
+
 func TestExitCodes(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, content string) string {
