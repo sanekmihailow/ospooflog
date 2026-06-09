@@ -59,6 +59,7 @@ type opts struct {
 	Overrides     string   `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
 	Ignore        string   `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
 	Cut           string   `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
+	KeepTLD       bool     `long:"keep-tld" description:"obfuscate: keep the real top-level label of FQDN/HOST/EMAIL domains; the registrable domain becomes exampleN (stable per real domain), subdomain serviceN — e.g. messenger.max.ru → service1.example1.ru"`
 	JSON          bool     `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string   `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
 	Debug         int      `long:"debug" description:"debug trace verbosity on stderr, 1-10 (cumulative: 1 config/options, 4 session, 6 stages, 7 timings, 8 detector internals, 9 +caller/stack, 10 +runtime stats); off when omitted"`
@@ -164,7 +165,9 @@ func run(args []string) error {
 		fmt.Fprintln(os.Stderr, "warning: --strict-restore is deprecated — strict restore is now the default; pass --fast-restore to opt out")
 	}
 
-	m := mapper.New(replacer.New())
+	rep := replacer.New()
+	rep.SetKeepTLD(o.KeepTLD)
+	m := mapper.New(rep)
 	if err := session.Load(o.Session, m); err != nil {
 		return fmt.Errorf("session load: %w", err)
 	}

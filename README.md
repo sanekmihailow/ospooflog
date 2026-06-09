@@ -230,6 +230,10 @@ ospooflog -s session.json show
                      regexps; any line a match touches is removed entirely
                      before detection. A multi-line `(?s)` regexp drops the
                      whole spanned block. Not reversible.
+  --keep-tld         obfuscate: keep the real top-level label of FQDN/HOST/
+                     EMAIL domains; the registrable domain becomes exampleN
+                     (stable per real domain), subdomain serviceN —
+                     messenger.max.ru → service1.example1.ru.
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
@@ -313,6 +317,23 @@ A literal matches a substring; a `re:` pattern is a Go regexp. A single-line
 pattern drops its line; a multi-line `(?s)` pattern drops every line the match
 spans — handy for a multi-line `PS1` prompt copied into the log.
 
+### Keeping the real TLD with `--keep-tld`
+
+By default FQDN/HOST/EMAIL domains map to `service1.example.com` / `user1@example.com`.
+`--keep-tld` instead keeps the real top-level label and counts the rest: the
+registrable domain becomes `exampleN` (stable per real domain — same domain,
+same `N`), the subdomain `serviceN`, the local part `userN`.
+
+```sh
+printf 'messenger.max.ru api.vk.ru chat.max.ru alice@max.ru\n' \
+  | ospooflog -s s.json --keep-tld obfuscate
+# service1.example1.ru service2.example2.ru service3.example1.ru user1@example1.ru
+#   max.ru → example1 (shared by messenger/chat and the email), vk.ru → example2
+```
+
+TLD detection is the last label only, so a multi-part suffix like `co.uk` keeps
+just `.uk` for now.
+
 ### Structured (NDJSON) logs
 
 ```sh
@@ -353,6 +374,7 @@ overrides: ./ovr.yaml       # --overrides file
 cut: ./.ospoof-cut          # --cut file
 fast_restore: false         # --fast-restore
 json: false                 # --json
+keep_tld: false             # --keep-tld
 debug: 5                    # --debug verbosity 1-10 (omit for off)
 debug_out: ./prof           # --debug-out directory
 ```
