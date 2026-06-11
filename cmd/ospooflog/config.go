@@ -14,17 +14,17 @@ import (
 // settings and named profiles are intentionally absent — no such feature
 // exists yet, so there'd be nothing to configure.
 type config struct {
-	Mode        string `yaml:"mode"`
-	Session     string `yaml:"session"`
-	AllowKeys   string `yaml:"allow_keys"`
-	Ignore      string `yaml:"ignore"`
-	Overrides   string `yaml:"overrides"`
-	Cut         string `yaml:"cut"`
-	DebugOut    string `yaml:"debug_out"`
-	FastRestore *bool  `yaml:"fast_restore"`
-	JSON        *bool  `yaml:"json"`
-	KeepTLD     *bool  `yaml:"keep_tld"`
-	Debug       *int   `yaml:"debug"`
+	Mode        string `yaml:"mode,omitempty"`
+	Session     string `yaml:"session,omitempty"`
+	AllowKeys   string `yaml:"allow_keys,omitempty"`
+	Ignore      string `yaml:"ignore,omitempty"`
+	Overrides   string `yaml:"overrides,omitempty"`
+	Cut         string `yaml:"cut,omitempty"`
+	DebugOut    string `yaml:"debug_out,omitempty"`
+	FastRestore *bool  `yaml:"fast_restore,omitempty"`
+	JSON        *bool  `yaml:"json,omitempty"`
+	KeepTLD     *bool  `yaml:"keep_tld,omitempty"`
+	Debug       *int   `yaml:"debug,omitempty"`
 }
 
 // configPaths lists config locations in increasing priority: the per-user file

@@ -68,6 +68,11 @@ type opts struct {
 	Obfuscate     struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes, persist the mapping to the session file"`
 	Restore       struct{} `command:"restore" description:"reverse pass — restore originals in an AI response using the session file"`
 	Show          struct{} `command:"show" description:"print the current session mapping as a TOKEN/KIND/ORIGIN/REPLACE table"`
+	Config        struct {
+		Show struct{} `command:"show" description:"print the effective merged config as YAML"`
+		Edit struct{} `command:"edit" description:"open the config file in $EDITOR"`
+		Path struct{} `command:"path" description:"print the config file paths and which are loaded"`
+	} `command:"config" description:"inspect or edit the config file: show | edit | path"`
 }
 
 func main() {
@@ -168,7 +173,12 @@ func run(args []string) error {
 	}
 
 	if parser.Active == nil {
-		return errors.New("command required: obfuscate | restore | show")
+		return errors.New("command required: obfuscate | restore | show | config")
+	}
+
+	// config subcommands operate only on the config files — no session needed.
+	if parser.Active.Name == "config" {
+		return runConfig(parser.Active, cfg)
 	}
 
 	if o.StrictRestore {

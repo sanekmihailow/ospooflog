@@ -385,6 +385,15 @@ debug_out: ./prof           # --debug-out directory
 Precedence is **flag > project config > user config > built-in default**. A
 missing config file is ignored; a malformed one is an error (exit code 1).
 
+The `config` command inspects and edits it:
+
+```sh
+ospooflog config show   # print the effective merged config as YAML (set keys only)
+ospooflog config path   # list both config locations and which are loaded
+ospooflog config edit   # open the active config in $EDITOR (vi fallback);
+                        # bootstraps a per-user config if none exists yet
+```
+
 ## Explaining detection
 
 `--explain` reports, for each value a rule matched, whether it was masked or
