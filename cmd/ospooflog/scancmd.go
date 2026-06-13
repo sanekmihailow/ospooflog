@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/sanekmihailow/ospooflog/pkg/detector"
 	"github.com/sanekmihailow/ospooflog/pkg/mapper"
@@ -54,7 +56,15 @@ func runScan(o opts) error {
 		}
 		return writeRules(o.OutRules, matches, o.Simple)
 	}
-	return printScan(os.Stdout, matches, o.Mode)
+	stats := computeScanStats(matches, text, o.Mode)
+	switch o.Format {
+	case "", "text":
+		return printScanText(os.Stdout, stats)
+	case "json":
+		return printScanJSON(os.Stdout, stats)
+	default:
+		return fmt.Errorf("unknown --format %q (want text|json)", o.Format)
+	}
 }
 
 // writeRules turns scan matches into a starter --overrides file. It is NOT
@@ -221,52 +231,125 @@ func valueAtoms(s string) []string {
 	return out
 }
 
-// printScan reports per distinct value how often it occurs (like
-// `--dry-run | sort | uniq -c | sort -rn`): COUNT / KIND / VALUE, most frequent
-// first, with a totals footer.
-func printScan(w io.Writer, matches []detector.Match, mode string) error {
+// scanStats is the coverage report computed from detector matches: totals,
+// per-kind aggregate and per-value detail. Rendered as a text table or JSON.
+type scanStats struct {
+	Mode           string      `json:"mode"`
+	CharsTotal     int         `json:"chars_total"`
+	CharsMasked    int         `json:"chars_masked"`
+	MaskedPct      float64     `json:"masked_pct"`
+	Matches        int         `json:"matches"`
+	DistinctValues int         `json:"distinct_values"`
+	ByKind         []kindStat  `json:"by_kind"`
+	Values         []valueStat `json:"values"`
+}
+
+type kindStat struct {
+	Kind     string `json:"kind"`
+	Count    int    `json:"count"`
+	Distinct int    `json:"distinct"`
+}
+
+type valueStat struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+	Count int    `json:"count"`
+}
+
+// computeScanStats tallies matches into a scanStats: per (kind, value) counts,
+// per-kind aggregate, and character coverage (how many of the text's characters
+// would be masked, and the percent). Matches don't overlap, so summing the
+// matched value lengths is the masked-character total. Lists are sorted
+// most-frequent first.
+func computeScanStats(matches []detector.Match, text, mode string) scanStats {
+	s := scanStats{Mode: mode, Matches: len(matches), CharsTotal: utf8.RuneCountInString(text)}
+
 	type valKind struct {
 		kind  detector.EntityKind
 		value string
 	}
-	count := map[valKind]int{}
-	var order []valKind
-	kinds := map[detector.EntityKind]bool{}
-	for _, m := range matches {
-		vk := valKind{m.Kind, m.Value}
-		if count[vk] == 0 {
-			order = append(order, vk)
-		}
-		count[vk]++
-		kinds[m.Kind] = true
-	}
+	valCount := map[valKind]int{}
+	var valOrder []valKind
+	kindCount := map[detector.EntityKind]int{}
+	kindDistinct := map[detector.EntityKind]int{}
+	var kindOrder []detector.EntityKind
 
-	if len(matches) == 0 {
-		_, err := fmt.Fprintf(w, "no sensitive values detected (mode: %s)\n", mode)
+	for _, m := range matches {
+		s.CharsMasked += utf8.RuneCountInString(m.Value)
+		if _, ok := kindCount[m.Kind]; !ok {
+			kindOrder = append(kindOrder, m.Kind)
+		}
+		kindCount[m.Kind]++
+		vk := valKind{m.Kind, m.Value}
+		if valCount[vk] == 0 {
+			valOrder = append(valOrder, vk)
+			kindDistinct[m.Kind]++
+		}
+		valCount[vk]++
+	}
+	if s.CharsTotal > 0 {
+		s.MaskedPct = 100 * float64(s.CharsMasked) / float64(s.CharsTotal)
+	}
+	s.DistinctValues = len(valOrder)
+
+	for _, k := range kindOrder {
+		s.ByKind = append(s.ByKind, kindStat{string(k), kindCount[k], kindDistinct[k]})
+	}
+	sort.SliceStable(s.ByKind, func(i, j int) bool { return s.ByKind[i].Count > s.ByKind[j].Count })
+
+	for _, vk := range valOrder {
+		s.Values = append(s.Values, valueStat{string(vk.kind), vk.value, valCount[vk]})
+	}
+	sort.SliceStable(s.Values, func(i, j int) bool {
+		if s.Values[i].Count != s.Values[j].Count {
+			return s.Values[i].Count > s.Values[j].Count
+		}
+		if s.Values[i].Kind != s.Values[j].Kind {
+			return s.Values[i].Kind < s.Values[j].Kind
+		}
+		return s.Values[i].Value < s.Values[j].Value
+	})
+	return s
+}
+
+// printScanText renders the per-value table (COUNT / KIND / VALUE, most frequent
+// first), a per-kind aggregate line and a metrics footer.
+func printScanText(w io.Writer, s scanStats) error {
+	if s.Matches == 0 {
+		_, err := fmt.Fprintf(w, "no sensitive values detected in %d characters (mode: %s)\n", s.CharsTotal, s.Mode)
 		return err
 	}
-
-	// Most frequent first; kind then value as stable tiebreakers.
-	sort.SliceStable(order, func(i, j int) bool {
-		if count[order[i]] != count[order[j]] {
-			return count[order[i]] > count[order[j]]
-		}
-		if order[i].kind != order[j].kind {
-			return order[i].kind < order[j].kind
-		}
-		return order[i].value < order[j].value
-	})
-
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "COUNT\tKIND\tVALUE")
-	for _, vk := range order {
-		fmt.Fprintf(tw, "%d\t%s\t%s\n", count[vk], vk.kind, truncateRunes(vk.value, 60))
+	for _, v := range s.Values {
+		fmt.Fprintf(tw, "%d\t%s\t%s\n", v.Count, v.Kind, truncateRunes(v.Value, 60))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\n%d matches, %d distinct values across %d kinds (mode: %s)\n",
-		len(matches), len(order), len(kinds), mode)
+	parts := make([]string, len(s.ByKind))
+	for i, k := range s.ByKind {
+		parts[i] = fmt.Sprintf("%s %d", k.Kind, k.Count)
+	}
+	fmt.Fprintf(w, "\nby kind: %s\n", strings.Join(parts, ", "))
+	_, err := fmt.Fprintf(w, "%d matches, %d distinct values across %d kinds; %d/%d characters masked (%.1f%% of text) (mode: %s)\n",
+		s.Matches, s.DistinctValues, len(s.ByKind), s.CharsMasked, s.CharsTotal, s.MaskedPct, s.Mode)
+	return err
+}
+
+// printScanJSON emits the stats as JSON for dashboards/reporting.
+func printScanJSON(w io.Writer, s scanStats) error {
+	if s.ByKind == nil {
+		s.ByKind = []kindStat{}
+	}
+	if s.Values == nil {
+		s.Values = []valueStat{}
+	}
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(w, string(b))
 	return err
 }
 

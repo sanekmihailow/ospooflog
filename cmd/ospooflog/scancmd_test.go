@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,34 +11,57 @@ import (
 	"github.com/sanekmihailow/ospooflog/pkg/detector"
 )
 
-func TestPrintScan_PerValueCounts(t *testing.T) {
+func TestComputeScanStats_PerValueAndMetrics(t *testing.T) {
+	text := "a@b.com here\n10.0.0.1 and 10.0.0.1\nclean line\n"
 	matches := []detector.Match{
-		{Kind: detector.KindEmail, Value: "a@b.com"},
-		{Kind: detector.KindIP, Value: "10.0.0.1"},
-		{Kind: detector.KindIP, Value: "10.0.0.1"}, // count 2
-		{Kind: detector.KindIP, Value: "10.0.0.2"},
+		{Kind: detector.KindEmail, Value: "a@b.com", Start: 0},
+		{Kind: detector.KindIP, Value: "10.0.0.1", Start: 13},
+		{Kind: detector.KindIP, Value: "10.0.0.1", Start: 26}, // same line as the first IP
 	}
-	var buf bytes.Buffer
-	if err := printScan(&buf, matches, "safe"); err != nil {
-		t.Fatal(err)
+	s := computeScanStats(matches, text, "safe")
+	if s.Matches != 3 || s.DistinctValues != 2 {
+		t.Errorf("totals wrong: %+v", s)
 	}
-	out := buf.String()
-	// 10.0.0.1 (count 2) is the most frequent → its row comes first.
-	if strings.Index(out, "10.0.0.1") > strings.Index(out, "10.0.0.2") {
-		t.Errorf("higher-count value should come first:\n%s", out)
+	// "a@b.com"(7) + "10.0.0.1"(8) ×2 = 23 masked of 46 total characters.
+	if s.CharsTotal != 46 || s.CharsMasked != 23 {
+		t.Errorf("char metrics wrong: total=%d masked=%d (want 46/23)", s.CharsTotal, s.CharsMasked)
 	}
-	if !strings.Contains(out, "4 matches, 3 distinct values across 2 kinds") {
-		t.Errorf("footer wrong:\n%s", out)
+	if len(s.ByKind) != 2 || s.ByKind[0].Kind != "IP" || s.ByKind[0].Count != 2 {
+		t.Errorf("by_kind should lead with IP×2: %+v", s.ByKind)
+	}
+	if s.Values[0].Value != "10.0.0.1" || s.Values[0].Count != 2 {
+		t.Errorf("values should lead with 10.0.0.1×2: %+v", s.Values[0])
 	}
 }
 
-func TestPrintScan_Empty(t *testing.T) {
+func TestPrintScanText_Empty(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printScan(&buf, nil, "safe"); err != nil {
+	if err := printScanText(&buf, computeScanStats(nil, "a\nb\n", "safe")); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "no sensitive values detected") {
-		t.Errorf("expected the empty marker, got:\n%s", buf.String())
+	if !strings.Contains(buf.String(), "no sensitive values detected in 4 characters") {
+		t.Errorf("expected the empty marker with char count, got:\n%s", buf.String())
+	}
+}
+
+func TestPrintScanJSON_Valid(t *testing.T) {
+	matches := []detector.Match{
+		{Kind: detector.KindIP, Value: "10.0.0.1", Start: 0},
+		{Kind: detector.KindIP, Value: "10.0.0.1", Start: 9},
+	}
+	var buf bytes.Buffer
+	if err := printScanJSON(&buf, computeScanStats(matches, "10.0.0.1 10.0.0.1\n", "safe")); err != nil {
+		t.Fatal(err)
+	}
+	var got scanStats
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("output is not valid JSON: %v\n%s", err, buf.String())
+	}
+	if got.Matches != 2 || got.DistinctValues != 1 || got.Mode != "safe" {
+		t.Errorf("decoded stats wrong: %+v", got)
+	}
+	if len(got.ByKind) != 1 || got.ByKind[0].Kind != "IP" || got.ByKind[0].Count != 2 {
+		t.Errorf("by_kind wrong: %+v", got.ByKind)
 	}
 }
 
