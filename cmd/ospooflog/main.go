@@ -73,6 +73,7 @@ type opts struct {
 		Edit struct{} `command:"edit" description:"open the config file in $EDITOR"`
 		Path struct{} `command:"path" description:"print the config file paths and which are loaded"`
 	} `command:"config" description:"inspect or edit the config file: show | edit | path"`
+	Scan struct{} `command:"scan" description:"report detection coverage — count what would be masked, by kind, without obfuscating or persisting a session"`
 }
 
 func main() {
@@ -179,6 +180,10 @@ func run(args []string) error {
 	// config subcommands operate only on the config files — no session needed.
 	if parser.Active.Name == "config" {
 		return runConfig(parser.Active, cfg)
+	}
+	// scan only reads + detects; no session/mapper.
+	if parser.Active.Name == "scan" {
+		return runScan(o)
 	}
 
 	if o.StrictRestore {
