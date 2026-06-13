@@ -103,6 +103,22 @@ ospooflog -s session.json show
 # USER_001  USER   alice               user1
 ```
 
+### Scan a log for coverage
+
+`scan` reports what the detector *would* mask — a per-kind count with an
+example — without obfuscating or touching a session. Reads a file or stdin and
+honours `--mode`, `--ignore`, `--cut`.
+
+```sh
+ospooflog -i app.log scan
+# COUNT  KIND    EXAMPLE
+# 27     IP      10.23.41.5
+# 14     APIKEY  eyJhbGciOiJIUzI1Ni…
+# 3      EMAIL   alice@corp.com
+#
+# 44 matches across 3 kinds (mode: safe)
+```
+
 ## Detected entity types
 
 | Kind     | Example origin                                          | Example replace                                |
