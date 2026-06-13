@@ -54,6 +54,63 @@ func TestScan_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestGeneralizePattern_AtomUnion(t *testing.T) {
+	cases := []struct {
+		values []string
+		want   string
+	}{
+		{[]string{"10.0.0.1", "192.168.0.5"}, `(?:\d+|\.)+`},  // digits + dot
+		{[]string{"alice", "bob"}, `[A-Za-z]+`},               // single atom
+		{[]string{"k3s-node01", "web2-prod"}, `(?:[A-Za-z]+|\d+|-)+`}, // varied hosts → one pattern
+	}
+	for _, c := range cases {
+		if got := generalizePattern(c.values); got != c.want {
+			t.Errorf("generalizePattern(%v) = %q, want %q", c.values, got, c.want)
+		}
+	}
+}
+
+func TestWriteRules_SimpleExactAndOrdered(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "rules.yaml")
+	matches := []detector.Match{
+		{Kind: detector.KindEmail, Value: "a@b.com"},
+		{Kind: detector.KindIP, Value: "10.0.0.1"},
+		{Kind: detector.KindIP, Value: "10.0.0.1"}, // count 2 → higher coverage
+	}
+	if err := writeRules(out, matches, true); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(data)
+	if !strings.Contains(s, "origin: 10.0.0.1") || !strings.Contains(s, "origin: a@b.com") {
+		t.Errorf("simple mode should list exact values:\n%s", s)
+	}
+	if strings.Index(s, "10.0.0.1") > strings.Index(s, "a@b.com") {
+		t.Errorf("higher-coverage value should come first:\n%s", s)
+	}
+}
+
+func TestWriteRules_RegexEmitsPatterns(t *testing.T) {
+	dir := t.TempDir()
+	out := filepath.Join(dir, "rules.yaml")
+	matches := []detector.Match{{Kind: detector.KindIP, Value: "10.0.0.1"}}
+	if err := writeRules(out, matches, false); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// grex or the built-in generalizer both yield an "re:" pattern entry.
+	if !strings.Contains(string(data), "origin: re:") {
+		t.Errorf("regex mode should emit an re: pattern:\n%s", data)
+	}
+}
+
 func TestTruncateRunes(t *testing.T) {
 	if got := truncateRunes("abc", 5); got != "abc" {
 		t.Errorf("short string unchanged: %q", got)

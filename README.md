@@ -119,6 +119,24 @@ ospooflog -i app.log scan
 # 44 matches across 3 kinds (mode: safe)
 ```
 
+`scan --out-rules <file>` writes a **starter `--overrides` file** from what it
+found — a head start for newcomers who don't want to write regexes by hand. It
+is *not* applied; you edit it and pass it back with `--overrides`. Entries are
+ordered by coverage (most matches first).
+
+```sh
+ospooflog -i app.log scan --out-rules rules.yaml          # regex per kind (default)
+ospooflog -i app.log scan --out-rules rules.yaml --simple # exact origin → replace pairs
+```
+
+In regex mode each kind gets one `re:` pattern induced from its values: via the
+optional [`grex`](https://github.com/pemistahl/grex) binary if it's on `PATH`
+(not a build dependency — just shelled out when present), otherwise a built-in
+generalizer that collects the distinct segment atoms (digit run → `\d+`, letters
+→ `[A-Za-z]+`, punctuation literal) and quantifies their alternation, e.g.
+`(?:[A-Za-z]+|\d+|-)+`. The patterns are deliberately broad starting points —
+refine them.
+
 ## Detected entity types
 
 | Kind     | Example origin                                          | Example replace                                |
