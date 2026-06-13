@@ -61,6 +61,9 @@ type opts struct {
 	Ignore        string   `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
 	Cut           string   `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
 	KeepTLD       bool     `long:"keep-tld" description:"obfuscate: keep the real top-level label of FQDN/HOST/EMAIL domains; the registrable domain becomes exampleN (stable per real domain), subdomain serviceN — e.g. messenger.max.ru → service1.example1.ru"`
+	OutRules      string   `long:"out-rules" description:"scan: write a starter --overrides rules file based on what was found (regex per kind by default; --simple for exact values)"`
+	Regexp        bool     `long:"regexp" description:"--out-rules: emit regex (re:) patterns per kind (default)"`
+	Simple        bool     `long:"simple" description:"--out-rules: emit exact-value origin → replace pairs instead of regex patterns"`
 	JSON          bool     `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string   `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
 	Debug         int      `long:"debug" description:"debug trace verbosity on stderr, 1-10 (cumulative: 1 config/options, 4 session, 6 stages, 7 timings, 8 detector internals, 9 +caller/stack, 10 +runtime stats); off when omitted"`
@@ -533,11 +536,13 @@ func printMatches(w io.Writer, matches []detector.Match) error {
 	return tw.Flush()
 }
 
+type overridePair struct {
+	Origin  string `yaml:"origin"`
+	Replace string `yaml:"replace"`
+}
+
 type overridesFile struct {
-	Overrides []struct {
-		Origin  string `yaml:"origin"`
-		Replace string `yaml:"replace"`
-	} `yaml:"overrides"`
+	Overrides []overridePair `yaml:"overrides"`
 }
 
 // overrideRule is one origin → replace pair. A literal origin matches verbatim
