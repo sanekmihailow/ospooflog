@@ -138,6 +138,12 @@ func exitCode(err error) int {
 }
 
 func run(args []string) error {
+	// `--help <command|--flag>` prints curated examples for that topic, before
+	// go-flags' own --help handling kicks in.
+	if topic, ok := helpExamplesTopic(args); ok {
+		return printHelpExamples(os.Stdout, topic)
+	}
+
 	var o opts
 	parser := flags.NewParser(&o, flags.Default)
 	// Allow no subcommand at parse time so --valid (a standalone check) works;
