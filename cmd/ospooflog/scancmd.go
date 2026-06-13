@@ -221,24 +221,24 @@ func valueAtoms(s string) []string {
 	return out
 }
 
+// printScan reports per distinct value how often it occurs (like
+// `--dry-run | sort | uniq -c | sort -rn`): COUNT / KIND / VALUE, most frequent
+// first, with a totals footer.
 func printScan(w io.Writer, matches []detector.Match, mode string) error {
-	type stat struct {
-		count   int
-		example string
+	type valKind struct {
+		kind  detector.EntityKind
+		value string
 	}
-	stats := map[detector.EntityKind]*stat{}
-	var kinds []detector.EntityKind
+	count := map[valKind]int{}
+	var order []valKind
+	kinds := map[detector.EntityKind]bool{}
 	for _, m := range matches {
-		s := stats[m.Kind]
-		if s == nil {
-			s = &stat{}
-			stats[m.Kind] = s
-			kinds = append(kinds, m.Kind)
+		vk := valKind{m.Kind, m.Value}
+		if count[vk] == 0 {
+			order = append(order, vk)
 		}
-		s.count++
-		if s.example == "" {
-			s.example = m.Value
-		}
+		count[vk]++
+		kinds[m.Kind] = true
 	}
 
 	if len(matches) == 0 {
@@ -246,23 +246,27 @@ func printScan(w io.Writer, matches []detector.Match, mode string) error {
 		return err
 	}
 
-	// Highest count first; kind name as a stable tiebreaker.
-	sort.Slice(kinds, func(i, j int) bool {
-		if stats[kinds[i]].count != stats[kinds[j]].count {
-			return stats[kinds[i]].count > stats[kinds[j]].count
+	// Most frequent first; kind then value as stable tiebreakers.
+	sort.SliceStable(order, func(i, j int) bool {
+		if count[order[i]] != count[order[j]] {
+			return count[order[i]] > count[order[j]]
 		}
-		return kinds[i] < kinds[j]
+		if order[i].kind != order[j].kind {
+			return order[i].kind < order[j].kind
+		}
+		return order[i].value < order[j].value
 	})
 
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "COUNT\tKIND\tEXAMPLE")
-	for _, k := range kinds {
-		fmt.Fprintf(tw, "%d\t%s\t%s\n", stats[k].count, k, truncateRunes(stats[k].example, 40))
+	fmt.Fprintln(tw, "COUNT\tKIND\tVALUE")
+	for _, vk := range order {
+		fmt.Fprintf(tw, "%d\t%s\t%s\n", count[vk], vk.kind, truncateRunes(vk.value, 60))
 	}
 	if err := tw.Flush(); err != nil {
 		return err
 	}
-	_, err := fmt.Fprintf(w, "\n%d matches across %d kinds (mode: %s)\n", len(matches), len(kinds), mode)
+	_, err := fmt.Fprintf(w, "\n%d matches, %d distinct values across %d kinds (mode: %s)\n",
+		len(matches), len(order), len(kinds), mode)
 	return err
 }
 

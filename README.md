@@ -105,18 +105,20 @@ ospooflog -s session.json show
 
 ### Scan a log for coverage
 
-`scan` reports what the detector *would* mask — a per-kind count with an
-example — without obfuscating or touching a session. Reads a file or stdin and
-honours `--mode`, `--ignore`, `--cut`.
+`scan` reports what the detector *would* mask, per distinct value with its
+occurrence count (like `--dry-run | sort | uniq -c | sort -rn`) — without
+obfuscating or touching a session. Reads a file or stdin and honours `--mode`,
+`--ignore`, `--cut`.
 
 ```sh
 ospooflog -i app.log scan
-# COUNT  KIND    EXAMPLE
-# 27     IP      10.23.41.5
-# 14     APIKEY  eyJhbGciOiJIUzI1Ni…
-# 3      EMAIL   alice@corp.com
+# COUNT  KIND    VALUE
+# 18     IP      10.23.41.5
+# 9      IP      10.23.41.6
+# 4      EMAIL   alice@corp.com
+# 1      APIKEY  eyJhbGciOiJIUzI1NiJ9.eyJzdWIi…
 #
-# 44 matches across 3 kinds (mode: safe)
+# 44 matches, 12 distinct values across 3 kinds (mode: safe)
 ```
 
 `scan --out-rules <file>` writes a **starter `--overrides` file** from what it

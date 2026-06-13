@@ -10,24 +10,24 @@ import (
 	"github.com/sanekmihailow/ospooflog/pkg/detector"
 )
 
-func TestPrintScan_CountsAndSorts(t *testing.T) {
+func TestPrintScan_PerValueCounts(t *testing.T) {
 	matches := []detector.Match{
-		{Kind: detector.KindIP, Value: "10.0.0.1"},
 		{Kind: detector.KindEmail, Value: "a@b.com"},
+		{Kind: detector.KindIP, Value: "10.0.0.1"},
+		{Kind: detector.KindIP, Value: "10.0.0.1"}, // count 2
 		{Kind: detector.KindIP, Value: "10.0.0.2"},
-		{Kind: detector.KindIP, Value: "10.0.0.3"},
 	}
 	var buf bytes.Buffer
 	if err := printScan(&buf, matches, "safe"); err != nil {
 		t.Fatal(err)
 	}
 	out := buf.String()
-	// IP (3) must sort ahead of EMAIL (1).
-	if ip, email := strings.Index(out, "IP"), strings.Index(out, "EMAIL"); ip < 0 || email < 0 || ip > email {
-		t.Errorf("IP (3) should sort before EMAIL (1):\n%s", out)
+	// 10.0.0.1 (count 2) is the most frequent → its row comes first.
+	if strings.Index(out, "10.0.0.1") > strings.Index(out, "10.0.0.2") {
+		t.Errorf("higher-count value should come first:\n%s", out)
 	}
-	if !strings.Contains(out, "4 matches across 2 kinds") {
-		t.Errorf("missing/incorrect total:\n%s", out)
+	if !strings.Contains(out, "4 matches, 3 distinct values across 2 kinds") {
+		t.Errorf("footer wrong:\n%s", out)
 	}
 }
 
@@ -59,8 +59,8 @@ func TestGeneralizePattern_AtomUnion(t *testing.T) {
 		values []string
 		want   string
 	}{
-		{[]string{"10.0.0.1", "192.168.0.5"}, `(?:\d+|\.)+`},  // digits + dot
-		{[]string{"alice", "bob"}, `[A-Za-z]+`},               // single atom
+		{[]string{"10.0.0.1", "192.168.0.5"}, `(?:\d+|\.)+`},          // digits + dot
+		{[]string{"alice", "bob"}, `[A-Za-z]+`},                       // single atom
 		{[]string{"k3s-node01", "web2-prod"}, `(?:[A-Za-z]+|\d+|-)+`}, // varied hosts → one pattern
 	}
 	for _, c := range cases {
