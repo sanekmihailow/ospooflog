@@ -118,7 +118,21 @@ ospooflog -i app.log scan
 # 4      EMAIL   alice@corp.com
 # 1      APIKEY  eyJhbGciOiJIUzI1NiJ9.eyJzdWIi…
 #
-# 44 matches, 12 distinct values across 3 kinds (mode: safe)
+# by kind: IP 27, EMAIL 4, APIKEY 1
+# 44 matches, 12 distinct values across 3 kinds; 612/4096 characters masked (14.9% of text) (mode: safe)
+```
+
+The footer also reports how much of the text would be masked — masked characters
+over total (matches don't overlap, so it's a real fraction). `--format json`
+emits the same coverage as a JSON object — totals, char metrics, a per-kind
+aggregate and the per-value list — for dashboards or reporting:
+
+```sh
+ospooflog -i app.log scan --format json
+# {"mode":"safe","chars_total":4096,"chars_masked":612,"masked_pct":14.9,
+#  "matches":44,"distinct_values":12,
+#  "by_kind":[{"kind":"IP","count":27,"distinct":9}, …],
+#  "values":[{"kind":"IP","value":"10.23.41.5","count":18}, …]}
 ```
 
 `scan --out-rules <file>` writes a **starter `--overrides` file** from what it
@@ -280,6 +294,11 @@ refine them.
                      off when omitted). See "Debug levels" below.
   --debug-out dir    write binary Go artifacts to dir: runtime/trace +
                      CPU/heap pprof (read with go tool trace / pprof).
+  --out-rules path   scan: write a starter --overrides file from what was
+                     found; edit it, then pass back with --overrides.
+  --regexp           --out-rules: emit a regex (re:) per kind (default).
+  --simple           --out-rules: emit exact origin → replace pairs instead.
+  --format           scan: output format — text (default) | json (metrics).
 ```
 
 ## Examples

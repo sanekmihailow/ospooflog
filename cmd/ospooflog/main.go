@@ -64,6 +64,7 @@ type opts struct {
 	OutRules      string   `long:"out-rules" description:"scan: write a starter --overrides rules file based on what was found (regex per kind by default; --simple for exact values)"`
 	Regexp        bool     `long:"regexp" description:"--out-rules: emit regex (re:) patterns per kind (default)"`
 	Simple        bool     `long:"simple" description:"--out-rules: emit exact-value origin → replace pairs instead of regex patterns"`
+	Format        string   `long:"format" description:"scan: output format — text (default) | json (metrics for dashboards)"`
 	JSON          bool     `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string   `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
 	Debug         int      `long:"debug" description:"debug trace verbosity on stderr, 1-10 (cumulative: 1 config/options, 4 session, 6 stages, 7 timings, 8 detector internals, 9 +caller/stack, 10 +runtime stats); off when omitted"`
