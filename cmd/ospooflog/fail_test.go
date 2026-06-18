@@ -10,9 +10,14 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sanekmihailow/ospooflog/pkg/detector"
+	"github.com/sanekmihailow/ospooflog/pkg/jsonproc"
+	"github.com/sanekmihailow/ospooflog/pkg/mapper"
+	"github.com/sanekmihailow/ospooflog/pkg/obfuscator"
+	"github.com/sanekmihailow/ospooflog/pkg/replacer"
 )
 
 // Detector still masks obviously sensitive values. RED = detection alive.
@@ -90,5 +95,17 @@ func TestFail_MaskMustIgnoreFilter(t *testing.T) {
 	}
 	if !hasEmail {
 		t.Fatalf("RED as designed: --mask dropped the unselected EMAIL; GREEN would mean the kind filter stopped working")
+	}
+}
+
+// --fields remove drops the field. RED = the remove action still bites.
+func TestFail_JSONRemoveMustKeepField(t *testing.T) {
+	d := detector.New(detector.DefaultRules())
+	m := mapper.New(replacer.New())
+	p := jsonproc.New(obfuscator.New(d, m), m, nil, jsonproc.FieldRules{
+		"secret": {Action: jsonproc.ActionRemove},
+	})
+	if !strings.Contains(p.Process(`{"secret":"x","keep":"y"}`), "secret") {
+		t.Fatalf("RED as designed: --fields remove dropped the field; GREEN would mean remove stopped working")
 	}
 }

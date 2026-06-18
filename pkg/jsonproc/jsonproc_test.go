@@ -11,9 +11,13 @@ import (
 )
 
 func newProc(allowKeys []string) *Processor {
+	return newProcRules(allowKeys, nil)
+}
+
+func newProcRules(allowKeys []string, rules FieldRules) *Processor {
 	d := detector.New(detector.DefaultRules())
 	m := mapper.New(replacer.New())
-	return New(obfuscator.New(d, m), m, allowKeys)
+	return New(obfuscator.New(d, m), m, allowKeys, rules)
 }
 
 func TestProcess_JSONLineObfuscatesStrings(t *testing.T) {

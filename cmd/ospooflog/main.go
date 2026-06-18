@@ -68,6 +68,7 @@ type opts struct {
 	Format        string   `long:"format" description:"scan: output format — text (default) | json (metrics for dashboards)"`
 	JSON          bool     `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
 	AllowKeys     string   `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
+	Fields        string   `long:"fields" description:"--json: YAML file of dotted field paths → action (keep|mask|mask-as:KIND|remove), e.g. 'user.id: mask', 'headers.Authorization: remove'. Arrays are transparent (items.email matches every element)"`
 	Debug         int      `long:"debug" description:"debug trace verbosity on stderr, 1-10 (cumulative: 1 config/options, 4 session, 6 stages, 7 timings, 8 detector internals, 9 +caller/stack, 10 +runtime stats); off when omitted"`
 	DebugOut      string   `long:"debug-out" description:"directory for binary Go artifacts at high verbosity: runtime/trace + CPU/heap pprof (read with go tool trace / pprof)"`
 	Obfuscate     struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes, persist the mapping to the session file"`
@@ -262,6 +263,12 @@ func validate(o opts) error {
 		}
 		checked = append(checked, "mask")
 	}
+	if o.Fields != "" {
+		if _, err := loadFieldRules(o.Fields); err != nil {
+			return fmt.Errorf("fields: %w", err)
+		}
+		checked = append(checked, "fields")
+	}
 	if _, err := rulesForMode(o.Mode, o.Aggressive); err != nil {
 		return err
 	}
@@ -292,6 +299,9 @@ func rulesForMode(mode string, deprecatedAggressive bool) ([]detector.Rule, erro
 func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	if o.DryRun && o.Diff {
 		return errors.New("--diff and --dry-run are mutually exclusive")
+	}
+	if o.Fields != "" && !o.JSON {
+		fmt.Fprintln(os.Stderr, "warning: --fields is ignored without --json")
 	}
 	defer dbg.runtimeStats()
 	if o.DebugOut != "" {
@@ -427,7 +437,15 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	t0 := time.Now()
 	var result string
 	if o.JSON {
-		result = jsonproc.New(obf, m, splitCSV(o.AllowKeys)).Process(text)
+		var fr jsonproc.FieldRules
+		if o.Fields != "" {
+			fr, err = loadFieldRules(o.Fields)
+			if err != nil {
+				return fmt.Errorf("fields: %w", err)
+			}
+			dbg.at(5, "fields: %d rule(s) from %s", len(fr), o.Fields)
+		}
+		result = jsonproc.New(obf, m, splitCSV(o.AllowKeys), fr).Process(text)
 	} else {
 		text = audithex.Process(text, obf)
 		result = obf.Obfuscate(text)
