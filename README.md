@@ -308,6 +308,9 @@ refine them.
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
+  --fields path      --json: YAML of dotted field paths → action
+                     (`keep`/`mask`/`mask-as:KIND`/`remove`). See "Per-field
+                     rules" below.
   --debug=N          debug trace verbosity on stderr, 1-10 (cumulative;
                      off when omitted). See "Debug levels" below.
   --debug-out dir    write binary Go artifacts to dir: runtime/trace +
@@ -440,6 +443,31 @@ cat k8s.log | ospooflog -s s.json --json --allow-keys level,time,msg obfuscate
 For lines with a CRI prefix (`2026-... stdout F {...}`), the line falls
 back to plain-text obfuscation. Pure JSON lines have their string leaves
 swapped while keys, numbers and the JSON shape are preserved.
+
+#### Per-field rules with `--fields`
+
+By default every string leaf is scanned and only sensitive substrings are
+masked. `--fields` overrides that for named fields, addressed by dotted path:
+
+```yaml
+# fields.yaml
+fields:
+  user.id:                mask            # mask the whole value (even a number)
+  user.token:             mask-as:APIKEY  # mask the whole value as a given kind
+  headers.Authorization:  remove          # drop the field entirely
+  msg:                    keep            # never touch (skip detection)
+```
+
+```sh
+cat app.log | ospooflog -s s.json --json --fields fields.yaml obfuscate
+```
+
+Only exceptions need a rule — unlisted fields keep the smart default (scan the
+value, mask only the sensitive parts). Actions: `keep` (verbatim), `mask`
+(whole value → one fake), `mask-as:KIND` (a specific kind), `remove` (delete the
+field). Array indices are transparent, so `items.email` matches the `email` of
+every element of the `items` array, and a rule on an array-valued field
+(`tags: remove`) acts on the whole array.
 
 ## Exit codes
 

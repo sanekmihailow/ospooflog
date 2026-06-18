@@ -50,20 +50,48 @@ var keyKindHints = map[string]detector.EntityKind{
 	"uuid":        detector.KindUUID,
 }
 
-type Processor struct {
-	obf       *obfuscator.Obfuscator
-	mapper    *mapper.Mapper
-	allowKeys map[string]bool
+// Action is what a field rule does to a matched JSON field. The zero value
+// ActionAuto means "no rule" — the default detector pass applies.
+type Action uint8
+
+const (
+	ActionAuto   Action = iota // run the detector over the value (default)
+	ActionKeep                 // leave the value verbatim, skip detection
+	ActionMask                 // replace the whole value with one fake
+	ActionMaskAs               // replace the whole value with a fake of Kind
+	ActionRemove               // drop the field entirely
+)
+
+// FieldRule overrides the default handling for one field, addressed by its
+// dotted path (e.g. "user.email", "headers.Authorization").
+type FieldRule struct {
+	Action Action
+	Kind   detector.EntityKind // only for ActionMaskAs
 }
 
-func New(obf *obfuscator.Obfuscator, m *mapper.Mapper, allowKeys []string) *Processor {
+// FieldRules maps a dotted field path to its rule. Array indices are
+// transparent: "items.email" matches email inside any element of items.
+type FieldRules map[string]FieldRule
+
+// maskFieldKind is the kind used by a bare "mask" action — no template, so the
+// replacer falls back to FAKE_FIELD_<N>.
+const maskFieldKind = detector.EntityKind("FIELD")
+
+type Processor struct {
+	obf        *obfuscator.Obfuscator
+	mapper     *mapper.Mapper
+	allowKeys  map[string]bool
+	fieldRules FieldRules
+}
+
+func New(obf *obfuscator.Obfuscator, m *mapper.Mapper, allowKeys []string, fieldRules FieldRules) *Processor {
 	keys := make(map[string]bool, len(allowKeys))
 	for _, k := range allowKeys {
 		if k = strings.TrimSpace(k); k != "" {
 			keys[k] = true
 		}
 	}
-	return &Processor{obf: obf, mapper: m, allowKeys: keys}
+	return &Processor{obf: obf, mapper: m, allowKeys: keys, fieldRules: fieldRules}
 }
 
 // Process splits text on \n and obfuscates each line independently.
@@ -85,7 +113,7 @@ func (p *Processor) processLine(line string) string {
 	if err := json.Unmarshal([]byte(trimmed), &v); err != nil {
 		return p.obf.Obfuscate(line)
 	}
-	p.walk("", &v)
+	p.walk("", "", &v)
 
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
@@ -100,10 +128,12 @@ func (p *Processor) processLine(line string) string {
 }
 
 // walk recurses into the decoded structure, replacing string leaves with
-// their obfuscated form. parentKey is the map key the current value sits
-// under (empty for the root); array elements inherit their container's
-// key so allow-listing "messages" skips strings inside that array too.
-func (p *Processor) walk(parentKey string, v *any) {
+// their obfuscated form. path is the dotted field path of the current value
+// (array indices are transparent, so an array inherits its container's path);
+// parentKey is the immediate map key, used by the key-name allowKeys and
+// keyKindHints. Explicit --fields rules are applied at the map-key level
+// (below) so remove/mask can act on a whole field of any type.
+func (p *Processor) walk(path, parentKey string, v *any) {
 	switch t := (*v).(type) {
 	case string:
 		if p.allowKeys[parentKey] {
@@ -120,15 +150,53 @@ func (p *Processor) walk(parentKey string, v *any) {
 		}
 	case map[string]any:
 		for k, vv := range t {
+			childPath := joinPath(path, k)
+			if rule, ok := p.fieldRules[childPath]; ok {
+				switch rule.Action {
+				case ActionRemove:
+					delete(t, k)
+					continue
+				case ActionKeep:
+					continue
+				case ActionMask:
+					t[k] = p.fake(vv, maskFieldKind)
+					continue
+				case ActionMaskAs:
+					t[k] = p.fake(vv, rule.Kind)
+					continue
+				}
+			}
 			child := vv
-			p.walk(k, &child)
+			p.walk(childPath, k, &child)
 			t[k] = child
 		}
 	case []any:
 		for i := range t {
 			child := t[i]
-			p.walk(parentKey, &child)
+			p.walk(path, parentKey, &child)
 			t[i] = child
 		}
 	}
+}
+
+// fake replaces a whole leaf of any JSON type with a single registered fake so
+// restore can reverse it. Non-string scalars are stringified first (a forced
+// mask of a number/bool comes back as a string on restore — the type is lost).
+func (p *Processor) fake(v any, kind detector.EntityKind) string {
+	var origin string
+	if s, ok := v.(string); ok {
+		origin = s
+	} else {
+		b, _ := json.Marshal(v)
+		origin = string(b)
+	}
+	_, replace := p.mapper.Obfuscate(origin, kind, nil)
+	return replace
+}
+
+func joinPath(base, key string) string {
+	if base == "" {
+		return key
+	}
+	return base + "." + key
 }

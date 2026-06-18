@@ -103,6 +103,14 @@ var helpTopics = map[string]helpTopic{
 			{"ospooflog -s s.json --keep-tld obfuscate -i app.log", "messenger.max.ru → service1.example1.ru (real .ru kept)"},
 		},
 	},
+	"fields": {
+		title: "--fields FILE — per-field rules for --json logs (keep | mask | mask-as:KIND | remove)",
+		standalone: []helpExample{
+			{"ospooflog -s s.json --json --fields f.yaml obfuscate -i app.log", "apply the field rules while obfuscating NDJSON"},
+			{"ospooflog --valid --fields f.yaml", "syntax-check the rules without running"},
+		},
+		notes: []string{"$ cat f.yaml\nfields:\n  user.id:                mask            # mask the whole value\n  user.token:             mask-as:APIKEY  # mask as a specific kind\n  headers.Authorization:  remove          # drop the field entirely\n  msg:                    keep            # never touch\n# dotted paths; arrays are transparent (items.email matches every element)"},
+	},
 	"mask": {
 		title: "--mask GROUPS — which categories to mask (detection is unchanged; default 'all')",
 		standalone: []helpExample{
