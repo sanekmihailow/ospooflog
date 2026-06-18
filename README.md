@@ -79,6 +79,20 @@ it into the target machine and run.
 
 ## Usage
 
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `obfuscate` | Replace sensitive values with plausible fakes; persist the mapping to the session file. |
+| `restore` | Reverse pass — restore the originals in an AI response using the session file. |
+| `show` | Print the current session mapping as a `TOKEN`/`KIND`/`ORIGIN`/`REPLACE` table. |
+| `scan` | Report detection coverage — count what would be masked, by kind, without obfuscating. |
+| `config show` | Print the effective merged config (only the keys that are set). |
+| `config edit` | Open the active config file in `$EDITOR`. |
+| `config path` | Print the config file locations and which ones are loaded. |
+
+Run `ospooflog --help <command>` or `ospooflog --help --<flag>` for examples of any of these.
+
 ### Obfuscate a log file
 
 ```sh
