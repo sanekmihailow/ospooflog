@@ -77,3 +77,18 @@ func TestFail_HelpTopicsMustBeEmpty(t *testing.T) {
 		t.Fatalf("RED as designed: the scan topic has examples; GREEN would mean the help registry emptied out")
 	}
 }
+
+// --mask drops kinds outside the selected set. RED = the kind filter still bites.
+func TestFail_MaskMustIgnoreFilter(t *testing.T) {
+	c := detector.New(detector.DefaultRules())
+	c.SetMask(map[detector.EntityKind]bool{detector.KindIP: true})
+	hasEmail := false
+	for _, m := range c.Find("mail a@b.com from 10.0.0.1") {
+		if m.Kind == detector.KindEmail {
+			hasEmail = true
+		}
+	}
+	if !hasEmail {
+		t.Fatalf("RED as designed: --mask dropped the unselected EMAIL; GREEN would mean the kind filter stopped working")
+	}
+}

@@ -124,6 +124,10 @@ type Chain struct {
 	ignore  *IgnoreList
 	stats   *FindStats
 	explain func(Decision)
+	// kindFilter, when non-nil, restricts which kinds are emitted: a matched
+	// kind absent from the set is detected normally (claims its covered range)
+	// but not returned, so the value stays visible. nil = emit every kind.
+	kindFilter map[EntityKind]bool
 }
 
 // Decision is one per-candidate outcome reported to the --explain sink: a value
@@ -196,6 +200,16 @@ func (c *Chain) SetExplain(fn func(Decision)) {
 	if c.inner != nil {
 		c.inner.explain = fn
 	}
+}
+
+// SetMask restricts the emitted kinds to the given set (the --mask flag). A
+// kind not in the set is still detected — it claims its covered range so
+// overlap resolution is identical to an unfiltered run — but isn't returned,
+// leaving the value untouched in the output. Pass nil to mask every kind. The
+// inner base64 chain is deliberately left unfiltered: it only gates the
+// decode-verify decision, not the output.
+func (c *Chain) SetMask(kinds map[EntityKind]bool) {
+	c.kindFilter = kinds
 }
 
 // decide reports one candidate outcome to the explain sink (no-op when unset).
@@ -283,6 +297,12 @@ func (c *Chain) Find(text string) []Match {
 			if rule.Skip {
 				covered = append(covered, interval{blockStart, blockEnd})
 				c.decide(start, end, value, rule.Kind, false, "skip rule (preserved verbatim)")
+				continue
+			}
+
+			if c.kindFilter != nil && !c.kindFilter[rule.Kind] {
+				covered = append(covered, interval{blockStart, blockEnd})
+				c.decide(start, end, value, rule.Kind, false, "not in --mask set")
 				continue
 			}
 

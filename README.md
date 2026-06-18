@@ -301,6 +301,10 @@ refine them.
                      EMAIL domains; the registrable domain becomes exampleN
                      (stable per real domain), subdomain serviceN —
                      messenger.max.ru → service1.example1.ru.
+  --mask groups      obfuscate: comma-separated categories to mask — groups
+                     `secrets`/`pii`/`infra`/`ids` and/or bare kind names
+                     (e.g. `secrets,EMAIL`). Detection is unchanged; only the
+                     listed kinds are replaced. Default `all` masks everything.
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
@@ -405,6 +409,27 @@ printf 'messenger.max.ru api.vk.ru chat.max.ru alice@max.ru\n' \
 
 TLD detection is the last label only, so a multi-part suffix like `co.uk` keeps
 just `.uk` for now.
+
+### Masking only some categories with `--mask`
+
+By default every detected kind is masked. `--mask` narrows that to chosen
+categories so the rest stays readable — e.g. share a log with an AI but hide
+only the credentials, keeping IPs and emails for context.
+
+```sh
+L='user=alice@corp.com from 10.23.41.5 token=sk-ant-abc123XYZ'
+printf '%s\n' "$L" | ospooflog -s s.json --mask secrets obfuscate
+# user=alice@corp.com from 10.23.41.5 token=FAKE_API_KEY_001
+printf '%s\n' "$L" | ospooflog -s s.json --mask secrets,pii obfuscate
+# user=user1@example.com from 192.168.0.1 token=FAKE_API_KEY_001
+```
+
+Groups: `secrets` (PWD/APIKEY/TOKEN/DSN/PRIVKEY), `pii`
+(EMAIL/USER/PHONE/CARD/IP/IP6/MAC/ADDR/SID), `infra` (HOST/FQDN/PORT/PATH/ARN),
+`ids` (UUID/PUBKEY/FP). A spec also accepts bare kind names
+(`--mask secrets,EMAIL`). Detection itself is unchanged — `--mask` only decides
+which finds get replaced, orthogonal to `--mode` (which decides how broadly to
+detect).
 
 ### Structured (NDJSON) logs
 

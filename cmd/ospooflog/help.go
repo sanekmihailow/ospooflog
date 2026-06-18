@@ -103,6 +103,15 @@ var helpTopics = map[string]helpTopic{
 			{"ospooflog -s s.json --keep-tld obfuscate -i app.log", "messenger.max.ru → service1.example1.ru (real .ru kept)"},
 		},
 	},
+	"mask": {
+		title: "--mask GROUPS — which categories to mask (detection is unchanged; default 'all')",
+		standalone: []helpExample{
+			{"ospooflog -s s.json --mask secrets obfuscate -i app.log", "mask only credentials; leave IP/email/etc. visible"},
+			{"ospooflog -s s.json --mask secrets,pii obfuscate -i app.log", "credentials + personal data"},
+			{"ospooflog -s s.json --mask secrets,EMAIL obfuscate -i app.log", "a group plus one bare kind (power-user)"},
+		},
+		notes: []string{"groups: secrets (PWD/APIKEY/TOKEN/DSN/PRIVKEY) · pii (EMAIL/USER/PHONE/CARD/IP/IP6/MAC/ADDR/SID) · infra (HOST/FQDN/PORT/PATH/ARN) · ids (UUID/PUBKEY/FP)"},
+	},
 	"mode": {
 		title: "--mode safe|balanced|aggressive — detection breadth",
 		standalone: []helpExample{
