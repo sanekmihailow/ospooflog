@@ -60,6 +60,7 @@ type opts struct {
 	Overrides     string   `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
 	Ignore        string   `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
 	Cut           string   `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
+	Mask          string   `long:"mask" description:"obfuscate: comma-separated categories to mask — groups secrets|pii|infra|ids and/or bare kind names (e.g. secrets,EMAIL); detection is unchanged, only the listed kinds are replaced. Default 'all' masks everything"`
 	KeepTLD       bool     `long:"keep-tld" description:"obfuscate: keep the real top-level label of FQDN/HOST/EMAIL domains; the registrable domain becomes exampleN (stable per real domain), subdomain serviceN — e.g. messenger.max.ru → service1.example1.ru"`
 	OutRules      string   `long:"out-rules" description:"scan: write a starter --overrides rules file based on what was found (regex per kind by default; --simple for exact values)"`
 	Regexp        bool     `long:"regexp" description:"--out-rules: emit regex (re:) patterns per kind (default)"`
@@ -255,6 +256,12 @@ func validate(o opts) error {
 		}
 		checked = append(checked, "cut")
 	}
+	if o.Mask != "" {
+		if _, err := parseMask(o.Mask); err != nil {
+			return err
+		}
+		checked = append(checked, "mask")
+	}
 	if _, err := rulesForMode(o.Mode, o.Aggressive); err != nil {
 		return err
 	}
@@ -320,6 +327,14 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 		}
 		chain.SetIgnore(il)
 		dbg.at(5, "ignore: loaded from %s", o.Ignore)
+	}
+	if o.Mask != "" {
+		filter, err := parseMask(o.Mask)
+		if err != nil {
+			return err
+		}
+		chain.SetMask(filter)
+		dbg.at(3, "mask: %s → %d kinds (nil = all)", o.Mask, len(filter))
 	}
 
 	text, err := readInput(o.Input)
