@@ -25,12 +25,14 @@ internally as the stable mapping key but never leaves the tool.
 
 Download from the [releases page](https://github.com/sanekmihailow/ospooflog/releases).
 Each release ships statically-linked binaries for Linux / macOS / Windows
-(amd64 and arm64) plus a `SHA256SUMS` file. Drop the binary into your
-`$PATH` and run.
+(amd64 and arm64) as compressed archives — `.tar.gz` for Linux/macOS, `.zip`
+for Windows — plus a `SHA256SUMS` file. Extract and drop the `ospooflog`
+binary into your `$PATH`.
 
 ```sh
 # example for Linux amd64
-curl -L -o ospooflog https://github.com/sanekmihailow/ospooflog/releases/latest/download/ospooflog-linux-amd64
+curl -L -o ospooflog-linux-amd64.tar.gz https://github.com/sanekmihailow/ospooflog/releases/latest/download/ospooflog-linux-amd64.tar.gz
+tar -xzf ospooflog-linux-amd64.tar.gz
 chmod +x ospooflog && sudo mv ospooflog /usr/local/bin/
 ```
 

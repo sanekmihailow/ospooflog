@@ -60,7 +60,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build binary
+      - name: Build and archive binary
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -68,14 +68,26 @@ jobs:
         run: |
           ext=""
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
-          out="ospooflog-${GOOS}-${GOARCH}${ext}"
-          go build -ldflags="-s -w" -o "$out" ./cmd/ospooflog
-          sha256sum "$out" > "${out}.sha256"
+          # The binary inside the archive is just "ospooflog" so it lands clean
+          # on $PATH after extraction; the OS/arch lives in the archive name.
+          bin="ospooflog${ext}"
+          go build -ldflags="-s -w" -o "$bin" ./cmd/ospooflog
+          base="ospooflog-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            archive="${base}.zip"
+            zip -q "$archive" "$bin"
+          else
+            archive="${base}.tar.gz"
+            tar -czf "$archive" "$bin"
+          fi
+          # Checksum the archive — that's what users download and verify.
+          sha256sum "$archive" > "${archive}.sha256"
+          rm "$bin"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ospooflog-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: ospooflog-${{ matrix.goos }}-${{ matrix.goarch }}*
+          path: ospooflog-${{ matrix.goos }}-${{ matrix.goarch }}.*
           if-no-files-found: error
           retention-days: 1
 
