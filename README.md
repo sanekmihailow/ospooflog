@@ -25,12 +25,14 @@ internally as the stable mapping key but never leaves the tool.
 
 Download from the [releases page](https://github.com/sanekmihailow/ospooflog/releases).
 Each release ships statically-linked binaries for Linux / macOS / Windows
-(amd64 and arm64) plus a `SHA256SUMS` file. Drop the binary into your
-`$PATH` and run.
+(amd64 and arm64) as compressed archives — `.tar.gz` for Linux/macOS, `.zip`
+for Windows — plus a `SHA256SUMS` file. Extract and drop the `ospooflog`
+binary into your `$PATH`.
 
 ```sh
 # example for Linux amd64
-curl -L -o ospooflog https://github.com/sanekmihailow/ospooflog/releases/latest/download/ospooflog-linux-amd64
+curl -L -o ospooflog-linux-amd64.tar.gz https://github.com/sanekmihailow/ospooflog/releases/latest/download/ospooflog-linux-amd64.tar.gz
+tar -xzf ospooflog-linux-amd64.tar.gz
 chmod +x ospooflog && sudo mv ospooflog /usr/local/bin/
 ```
 
@@ -79,6 +81,20 @@ it into the target machine and run.
 
 ## Usage
 
+### Commands
+
+| Command | What it does |
+| --- | --- |
+| `obfuscate` | Replace sensitive values with plausible fakes; persist the mapping to the session file. |
+| `restore` | Reverse pass — restore the originals in an AI response using the session file. |
+| `show` | Print the current session mapping as a `TOKEN`/`KIND`/`ORIGIN`/`REPLACE` table. |
+| `scan` | Report detection coverage — count what would be masked, by kind, without obfuscating. |
+| `config show` | Print the effective merged config (only the keys that are set). |
+| `config edit` | Open the active config file in `$EDITOR`. |
+| `config path` | Print the config file locations and which ones are loaded. |
+
+Run `ospooflog --help <command>` or `ospooflog --help --<flag>` for examples of any of these.
+
 ### Obfuscate a log file
 
 ```sh
@@ -102,6 +118,56 @@ ospooflog -s session.json show
 # IP_001    IP     10.23.41.5          192.168.0.1
 # USER_001  USER   alice               user1
 ```
+
+### Scan a log for coverage
+
+`scan` reports what the detector *would* mask, per distinct value with its
+occurrence count (like `--dry-run | sort | uniq -c | sort -rn`) — without
+obfuscating or touching a session. Reads a file or stdin and honours `--mode`,
+`--ignore`, `--cut`.
+
+```sh
+ospooflog -i app.log scan
+# COUNT  KIND    VALUE
+# 18     IP      10.23.41.5
+# 9      IP      10.23.41.6
+# 4      EMAIL   alice@corp.com
+# 1      APIKEY  eyJhbGciOiJIUzI1NiJ9.eyJzdWIi…
+#
+# by kind: IP 27, EMAIL 4, APIKEY 1
+# 44 matches, 12 distinct values across 3 kinds; 612/4096 characters masked (14.9% of text) (mode: safe)
+```
+
+The footer also reports how much of the text would be masked — masked characters
+over total (matches don't overlap, so it's a real fraction). `--format json`
+emits the same coverage as a JSON object — totals, char metrics, a per-kind
+aggregate and the per-value list — for dashboards or reporting:
+
+```sh
+ospooflog -i app.log scan --format json
+# {"mode":"safe","chars_total":4096,"chars_masked":612,"masked_pct":14.9,
+#  "matches":44,"distinct_values":12,
+#  "by_kind":[{"kind":"IP","count":27,"distinct":9}, …],
+#  "values":[{"kind":"IP","value":"10.23.41.5","count":18}, …]}
+```
+
+`scan --out-rules <file>` writes a **starter `--overrides` file** from what it
+found — a head start for newcomers who don't want to write regexes by hand. It
+is *not* applied; you edit it and pass it back with `--overrides`. Entries are
+ordered by coverage (most matches first).
+
+```sh
+ospooflog -i app.log scan --out-rules rules.yaml          # regex per kind (default)
+ospooflog -i app.log scan --out-rules rules.yaml --simple # exact origin → replace pairs
+```
+
+In regex mode each kind gets one `re:` pattern induced from its values: via the
+optional [`grex`](https://github.com/pemistahl/grex) binary if it's on `PATH`
+(not a build dependency — just shelled out when present), otherwise a built-in
+generalizer that collects the distinct segment atoms (digit run → `\d+`, letters
+→ `[A-Za-z]+`, punctuation literal) and quantifies their alternation, e.g.
+`(?:[A-Za-z]+|\d+|-)+`. The patterns are deliberately broad starting points —
+refine them.
 
 ## Detected entity types
 
@@ -200,7 +266,7 @@ ospooflog -s session.json show
 ```
   -i, --input        input file (default: stdin)
   -o, --output       output file (default: stdout)
-  -s, --session      session file (required)
+  -s, --session      session file (default: /tmp/ospooflog_session.json)
 
   --mode             detection breadth: safe (default) | balanced |
                      aggressive. Higher levels catch more, with higher
@@ -214,12 +280,50 @@ ospooflog -s session.json show
                      pass `--fast-restore` to opt out.
   --dry-run          obfuscate: print detected matches without modifying
                      text or persisting the session.
-  --overrides path   YAML file with fixed origin → replace pairs that win
-                     over the built-in templates.
+  --diff             obfuscate: print a per-line diff of original vs
+                     obfuscated text instead of the result; does not persist
+                     the session (mutually exclusive with --dry-run).
+  --explain          obfuscate: print per-value detector decisions to stderr
+                     (MASK / drop + reason) to analyze why values are or
+                     aren't masked.
+  --valid            parse-check the config and the --overrides / --ignore /
+                     --cut files and --mode for syntax errors, then exit
+                     (no command needed). Exit 0 = valid.
+  --overrides path   YAML file with origin → replace pairs that win over the
+                     built-in templates; a literal origin matches verbatim,
+                     `origin: re:<pattern>` matches a class by Go regexp.
+  --ignore path      obfuscate: file of values to leave unmasked — one per
+                     line, `#` comments, `re:<pattern>` for a regexp matched
+                     against captured values.
+  --cut path         obfuscate: file of literal substrings / `re:<pattern>`
+                     regexps; any line a match touches is removed entirely
+                     before detection. A multi-line `(?s)` regexp drops the
+                     whole spanned block. Not reversible.
+  --keep-tld         obfuscate: keep the real top-level label of FQDN/HOST/
+                     EMAIL domains; the registrable domain becomes exampleN
+                     (stable per real domain), subdomain serviceN —
+                     messenger.max.ru → service1.example1.ru.
+  --mask groups      obfuscate: comma-separated categories to mask — groups
+                     `secrets`/`pii`/`infra`/`ids` and/or bare kind names
+                     (e.g. `secrets,EMAIL`). Detection is unchanged; only the
+                     listed kinds are replaced. Default `all` masks everything.
+  --in-place         obfuscate: rewrite each FILE argument in place, backing
+                     the original up to FILE.bak. See "Batch / many files".
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
-  --dbg              debug logging on stderr.
+  --fields path      --json: YAML of dotted field paths → action
+                     (`keep`/`mask`/`mask-as:KIND`/`remove`). See "Per-field
+                     rules" below.
+  --debug=N          debug trace verbosity on stderr, 1-10 (cumulative;
+                     off when omitted). See "Debug levels" below.
+  --debug-out dir    write binary Go artifacts to dir: runtime/trace +
+                     CPU/heap pprof (read with go tool trace / pprof).
+  --out-rules path   scan: write a starter --overrides file from what was
+                     found; edit it, then pass back with --overrides.
+  --regexp           --out-rules: emit a regex (re:) per kind (default).
+  --simple           --out-rules: emit exact origin → replace pairs instead.
+  --format           scan: output format — text (default) | json (metrics).
 ```
 
 ## Examples
@@ -256,15 +360,101 @@ echo "also try 192.168.0.10 instead" | ospooflog -s s.json --fast-restore restor
 ```yaml
 # overrides.yaml
 overrides:
-  - origin: alice
+  - origin: alice            # literal — matches verbatim (one-to-one)
     replace: bob
   - origin: 10.1.2.3
     replace: 172.16.0.5
+  - origin: "re:user[0-9]+"  # re: prefix — Go regexp masking a whole class
+    replace: MASKED_USER
 ```
 
 ```sh
 ospooflog -s s.json --overrides overrides.yaml -i error.log obfuscate
 ```
+
+A literal `origin` is replaced one-to-one. An `origin: re:<pattern>` masks every
+value matching the regexp to the same `replace` (so `user1`, `user42`, `user99`
+all become `MASKED_USER`); each distinct value is still recorded as its own
+session entry, so `restore` maps the shared fake back to a real value. Regex
+overrides are plain-text only — they're skipped under `--json`.
+
+### Cutting noise with `--cut`
+
+Unlike `--overrides` (which replaces) and `--ignore` (which leaves values
+visible), `--cut` deletes whole lines a pattern touches — for prompt/banner
+noise pasted into a log that you want gone, not masked. It runs before
+detection, so the content reaches neither the AI nor the session (and so is
+not reversible).
+
+```
+# cut.txt — a literal substring, or re:<pattern>
+(HOME-WIN)                       # drops any line containing this
+re:(?s)✅.*?\$                    # drops a whole multi-line shell prompt block
+```
+
+```sh
+ospooflog -s s.json --cut cut.txt -i session.log obfuscate
+```
+
+A literal matches a substring; a `re:` pattern is a Go regexp. A single-line
+pattern drops its line; a multi-line `(?s)` pattern drops every line the match
+spans — handy for a multi-line `PS1` prompt copied into the log.
+
+### Batch / many files
+
+`obfuscate` takes positional `FILE` arguments (globs work). All files share one
+session, so a value gets the **same fake across every file**. Without
+`--in-place` the obfuscated outputs concatenate to `-o`/stdout; with `--in-place`
+each file is rewritten and its original is kept as `FILE.bak`.
+
+```sh
+# sanitize a whole directory in place, originals saved as *.log.bak
+ospooflog -s s.json --in-place obfuscate logs/*.log
+
+# or stream the combined result to one file
+ospooflog -s s.json obfuscate a.log b.log > combined.safe.log
+```
+
+`--in-place` requires `FILE` arguments (it can't rewrite stdin), and `--dry-run`
+/ `--diff` don't apply to multi-file runs.
+
+### Keeping the real TLD with `--keep-tld`
+
+By default FQDN/HOST/EMAIL domains map to `service1.example.com` / `user1@example.com`.
+`--keep-tld` instead keeps the real top-level label and counts the rest: the
+registrable domain becomes `exampleN` (stable per real domain — same domain,
+same `N`), the subdomain `serviceN`, the local part `userN`.
+
+```sh
+printf 'messenger.max.ru api.vk.ru chat.max.ru alice@max.ru\n' \
+  | ospooflog -s s.json --keep-tld obfuscate
+# service1.example1.ru service2.example2.ru service3.example1.ru user1@example1.ru
+#   max.ru → example1 (shared by messenger/chat and the email), vk.ru → example2
+```
+
+TLD detection is the last label only, so a multi-part suffix like `co.uk` keeps
+just `.uk` for now.
+
+### Masking only some categories with `--mask`
+
+By default every detected kind is masked. `--mask` narrows that to chosen
+categories so the rest stays readable — e.g. share a log with an AI but hide
+only the credentials, keeping IPs and emails for context.
+
+```sh
+L='user=alice@corp.com from 10.23.41.5 token=sk-ant-abc123XYZ'
+printf '%s\n' "$L" | ospooflog -s s.json --mask secrets obfuscate
+# user=alice@corp.com from 10.23.41.5 token=FAKE_API_KEY_001
+printf '%s\n' "$L" | ospooflog -s s.json --mask secrets,pii obfuscate
+# user=user1@example.com from 192.168.0.1 token=FAKE_API_KEY_001
+```
+
+Groups: `secrets` (PWD/APIKEY/TOKEN/DSN/PRIVKEY), `pii`
+(EMAIL/USER/PHONE/CARD/IP/IP6/MAC/ADDR/SID), `infra` (HOST/FQDN/PORT/PATH/ARN),
+`ids` (UUID/PUBKEY/FP). A spec also accepts bare kind names
+(`--mask secrets,EMAIL`). Detection itself is unchanged — `--mask` only decides
+which finds get replaced, orthogonal to `--mode` (which decides how broadly to
+detect).
 
 ### Structured (NDJSON) logs
 
@@ -275,6 +465,121 @@ cat k8s.log | ospooflog -s s.json --json --allow-keys level,time,msg obfuscate
 For lines with a CRI prefix (`2026-... stdout F {...}`), the line falls
 back to plain-text obfuscation. Pure JSON lines have their string leaves
 swapped while keys, numbers and the JSON shape are preserved.
+
+#### Per-field rules with `--fields`
+
+By default every string leaf is scanned and only sensitive substrings are
+masked. `--fields` overrides that for named fields, addressed by dotted path:
+
+```yaml
+# fields.yaml
+fields:
+  user.id:                mask            # mask the whole value (even a number)
+  user.token:             mask-as:APIKEY  # mask the whole value as a given kind
+  headers.Authorization:  remove          # drop the field entirely
+  msg:                    keep            # never touch (skip detection)
+```
+
+```sh
+cat app.log | ospooflog -s s.json --json --fields fields.yaml obfuscate
+```
+
+Only exceptions need a rule — unlisted fields keep the smart default (scan the
+value, mask only the sensitive parts). Actions: `keep` (verbatim), `mask`
+(whole value → one fake), `mask-as:KIND` (a specific kind), `remove` (delete the
+field). Array indices are transparent, so `items.email` matches the `email` of
+every element of the `items` array, and a rule on an array-valued field
+(`tags: remove`) acts on the whole array.
+
+## Exit codes
+
+So scripts and CI can branch on the failure class:
+
+| Code | Meaning                                                              |
+|------|---------------------------------------------------------------------|
+| `0`  | success                                                             |
+| `1`  | bad arguments or config — flag parse, unknown `--mode`, malformed YAML |
+| `2`  | I/O failure — input/output/session file can't be opened, read or written |
+| `3`  | bad detection rule — a `re:` pattern in `--overrides` or `--ignore` won't compile (or matches the empty string) |
+
+## Config file
+
+To avoid repeating the same flags, defaults can be set in a YAML config. Both
+locations are read, with the project file overlaid on the per-user one, and an
+explicit flag overrides both:
+
+1. `./.ospooflog.yaml` (project — highest priority)
+2. `~/.config/ospooflog/config.yaml` (per-user)
+
+```yaml
+# .ospooflog.yaml — every key is optional
+mode: balanced              # --mode
+session: ./logs/s.json      # default session path
+allow_keys: level,time,msg  # --allow-keys
+ignore: ./.ospoof-ignore    # --ignore file
+overrides: ./ovr.yaml       # --overrides file
+cut: ./.ospoof-cut          # --cut file
+fast_restore: false         # --fast-restore
+json: false                 # --json
+keep_tld: false             # --keep-tld
+debug: 5                    # --debug verbosity 1-10 (omit for off)
+debug_out: ./prof           # --debug-out directory
+```
+
+Precedence is **flag > project config > user config > built-in default**. A
+missing config file is ignored; a malformed one is an error (exit code 1).
+
+The `config` command inspects and edits it:
+
+```sh
+ospooflog config show   # print the effective merged config as YAML (set keys only)
+ospooflog config path   # list both config locations and which are loaded
+ospooflog config edit   # open the active config in $EDITOR (vi fallback);
+                        # bootstraps a per-user config if none exists yet
+```
+
+## Explaining detection
+
+`--explain` reports, for each value a rule matched, whether it was masked or
+dropped and why — to debug coverage (a value you expected masked that wasn't, or
+the reverse). Like `--debug` it writes to **stderr**, so the obfuscated result on
+stdout is unaffected.
+
+```sh
+printf 'login password=changeme from 10.0.0.1\n' | ospooflog --explain obfuscate >/dev/null
+# explain: drop [PWD] @15 "changeme" — placeholder
+# explain: MASK [IP] @29 "10.0.0.1"
+```
+
+Drop reasons map to the detector's value filters: `validate rejected`,
+`low entropy (…)`, `placeholder`, `protected value`, `ignored (--ignore)`,
+`not valid base64` / `decoded base64 has no credential`, `skip rule`. A value no
+rule matched isn't listed (there's no decision to report), and one already
+claimed by an earlier rule isn't re-reported.
+
+## Debug levels
+
+`--debug=N` prints a cumulative trace to **stderr** (never stdout — that carries
+the obfuscated result). Omitting `--debug` is off. Each level adds detail on top
+of the previous:
+
+| N | adds |
+|---|------|
+| 1 | config files loaded, effective `mode`/`session` |
+| 2 | all effective options after the flag/config merge |
+| 3 | active ruleset size (`mode → N rules`) |
+| 4 | session load/save (paths + entry counts) |
+| 5 | overrides / ignore / cut loads |
+| 6 | pipeline stage transitions |
+| 7 | per-stage timings |
+| 8 | detector internals (rules evaluated, prefilter skips, candidates, emitted) |
+| 9 | Go caller `file:line` on every line + goroutine stack on error |
+| 10 | Go runtime stats (mem, goroutines, GC) at exit |
+
+Panics always print a full stack regardless of level. For deep profiling,
+`--debug-out <dir>` writes a `runtime/trace` and CPU/heap pprof into `<dir>`
+(`go tool trace <dir>/ospooflog.trace`, `go tool pprof <dir>/ospooflog.cpu.pprof`)
+— independent of the text verbosity level.
 
 ## Session file
 
