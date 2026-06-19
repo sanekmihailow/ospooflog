@@ -5,6 +5,60 @@ All notable changes to ospooflog are documented here. Format loosely follows
 narrative summary rather than a strict Added/Changed/Fixed split — see the
 linked PR for the full commit list.
 
+## [v0.4.0] — 2026-06-19
+
+Diff [v0.3.5...v0.4.0](https://github.com/sanekmihailow/ospooflog/compare/v0.3.5...v0.4.0)
+
+First feature release on top of the 0.3.x line — many new flags and two new
+commands. No breaking changes: existing invocations and session files keep
+working. One quality-of-life change — `-s/--session` is now optional, defaulting
+to `/tmp/ospooflog_session.json`.
+
+- **`config` file + command** — set defaults in `~/.config/ospooflog/config.yaml`
+  and `./.ospooflog.yaml` (project overrides user; an explicit flag overrides
+  both) so the same flags aren't repeated. `config show` / `path` / `edit`
+  inspect and edit it.
+- **`scan` command** — read-only coverage report: per distinct value, how often
+  it occurs (`COUNT / KIND / VALUE`, most frequent first), plus a footer with
+  per-kind totals and what fraction of characters would be masked. No obfuscation
+  or session. `scan --format json` emits the same metrics as a JSON object for
+  dashboards. `scan --out-rules <file>` generates a starter `--overrides` file —
+  a regex per kind via the optional [`grex`](https://github.com/pemistahl/grex)
+  binary (if installed) or a built-in generalizer, `--simple` for exact values.
+- **`--ignore <file>`** — allowlist of values to never mask (literals + `re:`).
+- **`--cut <file>`** — drop whole lines a pattern touches before detection
+  (prompt/banner noise); a multi-line `(?s)` regex drops the whole block.
+- **`re:` patterns in `--overrides`** — `origin: re:<pattern>` masks a class to
+  one fake; literal origins keep the one-to-one substitution.
+- **`--keep-tld`** — domain fakes keep the real top-level label; the registrable
+  domain becomes `exampleN`, the subdomain `serviceN` (e.g. `messenger.max.ru`
+  → `service1.example1.ru`).
+- **`--mask <groups>`** — choose which categories to mask: groups `secrets` /
+  `pii` / `infra` / `ids` and/or bare kind names (e.g. `secrets,EMAIL`).
+  Detection is unchanged; only the listed kinds are replaced (default `all`).
+- **`--fields <file>` (`--json`)** — per-field rules for NDJSON, addressed by
+  dotted path: `keep` / `mask` / `mask-as:KIND` / `remove`. `remove` drops a
+  field entirely (previously impossible); arrays are transparent so
+  `items.email` matches every element.
+- **Batch input + `--in-place`** — `obfuscate` takes positional `FILE` arguments
+  (globs work), all sharing one session so a value gets the same fake across
+  every file. `--in-place` rewrites each file, backing the original up to
+  `FILE.bak`; otherwise results concatenate to `-o`/stdout.
+- **`--help <command|--flag>`** — contextual examples per topic (e.g.
+  `ospooflog --help --overrides`): standalone uses, combinations, and a sample
+  file for the file-driven flags.
+- **`--diff`** — per-line diff of original vs obfuscated instead of the result.
+- **`--explain`** — per-value detector decisions on stderr (MASK / drop +
+  reason) to debug coverage.
+- **`--debug=N` (1-10) + `--debug-out <dir>`** — leveled stderr trace, from
+  config/effective options through session, stages, timings, detector internals,
+  Go caller/stack and runtime stats; `--debug-out` writes a runtime/trace and
+  CPU/heap pprof for `go tool`.
+- **`--valid`** — parse-check the config and the `--overrides` / `--ignore` /
+  `--cut` files and `--mode`, then exit (no obfuscation).
+- **Differentiated exit codes** — `0` ok / `1` bad args or config / `2` I/O /
+  `3` bad detection rule (e.g. a `re:` pattern that won't compile).
+
 ## [v0.3.5] — 2026-06-05
 
 Diff [v0.3.4...v0.3.5](https://github.com/sanekmihailow/ospooflog/compare/v0.3.4...v0.3.5)
