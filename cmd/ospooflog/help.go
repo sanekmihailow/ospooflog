@@ -36,7 +36,17 @@ var helpTopics = map[string]helpTopic{
 		combos: []helpExample{
 			{"ospooflog -s s.json --ignore allow.txt --cut noise.txt obfuscate -i app.log", "skip all-listed values, drop noise lines first"},
 			{"ospooflog -s s.json --overrides ovr.yaml --keep-tld obfuscate -i app.log", "custom replacements + keep real TLDs"},
+			{"ospooflog -s s.json --in-place obfuscate logs/*.log", "batch: rewrite many files in place, one shared session"},
 		},
+	},
+	"in-place": {
+		title: "--in-place — rewrite each FILE argument in place (backup to FILE.bak)",
+		standalone: []helpExample{
+			{"ospooflog -s s.json --in-place obfuscate app.log", "overwrite app.log, original kept as app.log.bak"},
+			{"ospooflog -s s.json --in-place obfuscate logs/*.log", "batch a glob; one shared session = consistent fakes"},
+			{"ospooflog -s s.json obfuscate a.log b.log", "without --in-place: results concatenate to stdout"},
+		},
+		notes: []string{"positional FILE args turn on batch mode; --in-place needs them (can't rewrite stdin). --dry-run/--diff don't apply to batch."},
 	},
 	"restore": {
 		title: "restore — turn an AI reply built on obfuscated text back into real values",

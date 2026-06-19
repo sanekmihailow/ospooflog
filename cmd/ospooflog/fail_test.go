@@ -109,3 +109,19 @@ func TestFail_JSONRemoveMustKeepField(t *testing.T) {
 		t.Fatalf("RED as designed: --fields remove dropped the field; GREEN would mean remove stopped working")
 	}
 }
+
+// --in-place backs the original up to FILE.bak. RED = the backup is written.
+func TestFail_InPlaceMustNotBackup(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "empty"))
+	dir := t.TempDir()
+	f := filepath.Join(dir, "a.log")
+	if err := os.WriteFile(f, []byte("user=alice\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := run([]string{"-s", filepath.Join(dir, "s.json"), "--in-place", "obfuscate", f}); err != nil {
+		t.Fatalf("in-place failed (not the point of this test): %v", err)
+	}
+	if _, err := os.Stat(f + ".bak"); err == nil {
+		t.Fatalf("RED as designed: --in-place wrote the .bak backup; GREEN would mean the backup was skipped")
+	}
+}

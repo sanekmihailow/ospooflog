@@ -305,6 +305,8 @@ refine them.
                      `secrets`/`pii`/`infra`/`ids` and/or bare kind names
                      (e.g. `secrets,EMAIL`). Detection is unchanged; only the
                      listed kinds are replaced. Default `all` masks everything.
+  --in-place         obfuscate: rewrite each FILE argument in place, backing
+                     the original up to FILE.bak. See "Batch / many files".
   --json             obfuscate: parse each line as JSON (NDJSON) and
                      obfuscate string leaves while preserving structure.
   --allow-keys csv   --json: skip these JSON keys (e.g. level,timestamp,msg).
@@ -395,6 +397,24 @@ ospooflog -s s.json --cut cut.txt -i session.log obfuscate
 A literal matches a substring; a `re:` pattern is a Go regexp. A single-line
 pattern drops its line; a multi-line `(?s)` pattern drops every line the match
 spans — handy for a multi-line `PS1` prompt copied into the log.
+
+### Batch / many files
+
+`obfuscate` takes positional `FILE` arguments (globs work). All files share one
+session, so a value gets the **same fake across every file**. Without
+`--in-place` the obfuscated outputs concatenate to `-o`/stdout; with `--in-place`
+each file is rewritten and its original is kept as `FILE.bak`.
+
+```sh
+# sanitize a whole directory in place, originals saved as *.log.bak
+ospooflog -s s.json --in-place obfuscate logs/*.log
+
+# or stream the combined result to one file
+ospooflog -s s.json obfuscate a.log b.log > combined.safe.log
+```
+
+`--in-place` requires `FILE` arguments (it can't rewrite stdin), and `--dry-run`
+/ `--diff` don't apply to multi-file runs.
 
 ### Keeping the real TLD with `--keep-tld`
 
