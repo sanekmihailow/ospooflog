@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
 	"regexp/syntax"
 	rtdebug "runtime/debug"
@@ -46,35 +47,40 @@ func sessionPath(flag string) string {
 }
 
 type opts struct {
-	Input         string   `short:"i" long:"input" description:"input file (default: stdin)"`
-	Output        string   `short:"o" long:"output" description:"output file (default: stdout)"`
-	Session       string   `short:"s" long:"session" description:"session file (default: /tmp/ospooflog_session.json)"`
-	Mode          string   `long:"mode" description:"detection breadth — safe (default): strict context only | balanced: + 'as alice' / abs paths / bare ports | aggressive: + single-label HOST / base64 decode-verify"`
-	Aggressive    bool     `long:"aggressive" description:"deprecated alias for --mode aggressive"`
-	FastRestore   bool     `long:"fast-restore" description:"opt out of word-boundary aware restore — faster, but a registered fake that's a prefix of an unrelated string in the AI response will be wrongly replaced"`
-	StrictRestore bool     `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
-	DryRun        bool     `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
-	Diff          bool     `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
-	Explain       bool     `long:"explain" description:"obfuscate: print per-value detector decisions to stderr (MASK / drop + reason) to analyze why values are or aren't masked"`
-	Valid         bool     `long:"valid" description:"parse-check the config and the --overrides / --ignore / --cut files and --mode for syntax errors, then exit (no command needed, no obfuscation)"`
-	Overrides     string   `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
-	Ignore        string   `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
-	Cut           string   `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
-	Mask          string   `long:"mask" description:"obfuscate: comma-separated categories to mask — groups secrets|pii|infra|ids and/or bare kind names (e.g. secrets,EMAIL); detection is unchanged, only the listed kinds are replaced. Default 'all' masks everything"`
-	KeepTLD       bool     `long:"keep-tld" description:"obfuscate: keep the real top-level label of FQDN/HOST/EMAIL domains; the registrable domain becomes exampleN (stable per real domain), subdomain serviceN — e.g. messenger.max.ru → service1.example1.ru"`
-	OutRules      string   `long:"out-rules" description:"scan: write a starter --overrides rules file based on what was found (regex per kind by default; --simple for exact values)"`
-	Regexp        bool     `long:"regexp" description:"--out-rules: emit regex (re:) patterns per kind (default)"`
-	Simple        bool     `long:"simple" description:"--out-rules: emit exact-value origin → replace pairs instead of regex patterns"`
-	Format        string   `long:"format" description:"scan: output format — text (default) | json (metrics for dashboards)"`
-	JSON          bool     `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
-	AllowKeys     string   `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
-	Fields        string   `long:"fields" description:"--json: YAML file of dotted field paths → action (keep|mask|mask-as:KIND|remove), e.g. 'user.id: mask', 'headers.Authorization: remove'. Arrays are transparent (items.email matches every element)"`
-	Debug         int      `long:"debug" description:"debug trace verbosity on stderr, 1-10 (cumulative: 1 config/options, 4 session, 6 stages, 7 timings, 8 detector internals, 9 +caller/stack, 10 +runtime stats); off when omitted"`
-	DebugOut      string   `long:"debug-out" description:"directory for binary Go artifacts at high verbosity: runtime/trace + CPU/heap pprof (read with go tool trace / pprof)"`
-	Obfuscate     struct{} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes, persist the mapping to the session file"`
-	Restore       struct{} `command:"restore" description:"reverse pass — restore originals in an AI response using the session file"`
-	Show          struct{} `command:"show" description:"print the current session mapping as a TOKEN/KIND/ORIGIN/REPLACE table"`
-	Config        struct {
+	Input         string `short:"i" long:"input" description:"input file (default: stdin)"`
+	Output        string `short:"o" long:"output" description:"output file (default: stdout)"`
+	Session       string `short:"s" long:"session" description:"session file (default: /tmp/ospooflog_session.json)"`
+	Mode          string `long:"mode" description:"detection breadth — safe (default): strict context only | balanced: + 'as alice' / abs paths / bare ports | aggressive: + single-label HOST / base64 decode-verify"`
+	Aggressive    bool   `long:"aggressive" description:"deprecated alias for --mode aggressive"`
+	FastRestore   bool   `long:"fast-restore" description:"opt out of word-boundary aware restore — faster, but a registered fake that's a prefix of an unrelated string in the AI response will be wrongly replaced"`
+	StrictRestore bool   `long:"strict-restore" description:"deprecated — strict restore is now the default; pass --fast-restore to opt out"`
+	DryRun        bool   `long:"dry-run" description:"obfuscate: print detected matches without modifying text or persisting the session"`
+	Diff          bool   `long:"diff" description:"obfuscate: print a per-line diff of original vs obfuscated text instead of the obfuscated text; does not persist the session (mutually exclusive with --dry-run)"`
+	Explain       bool   `long:"explain" description:"obfuscate: print per-value detector decisions to stderr (MASK / drop + reason) to analyze why values are or aren't masked"`
+	Valid         bool   `long:"valid" description:"parse-check the config and the --overrides / --ignore / --cut files and --mode for syntax errors, then exit (no command needed, no obfuscation)"`
+	Overrides     string `long:"overrides" description:"YAML file with origin → replace pairs that win over the built-in templates; a literal origin matches verbatim, an 'origin: re:<pattern>' value matches a class by Go regexp; plain-text mode only (NUL placeholders collide with JSON)"`
+	Ignore        string `long:"ignore" description:"obfuscate: plain-text file of values to leave untouched — one per line, '#' for comments, 're:<pattern>' for a Go regexp matched against captured values"`
+	Cut           string `long:"cut" description:"obfuscate: plain-text file of literal substrings / 're:<pattern>' regexps; any line a match touches is removed entirely before detection (a multi-line (?s) regex drops the whole spanned block). Not reversible — cut content never reaches the session"`
+	Mask          string `long:"mask" description:"obfuscate: comma-separated categories to mask — groups secrets|pii|infra|ids and/or bare kind names (e.g. secrets,EMAIL); detection is unchanged, only the listed kinds are replaced. Default 'all' masks everything"`
+	KeepTLD       bool   `long:"keep-tld" description:"obfuscate: keep the real top-level label of FQDN/HOST/EMAIL domains; the registrable domain becomes exampleN (stable per real domain), subdomain serviceN — e.g. messenger.max.ru → service1.example1.ru"`
+	InPlace       bool   `long:"in-place" description:"obfuscate: rewrite each FILE argument in place, backing the original up to FILE.bak first (requires positional FILE args; one shared session across all files)"`
+	OutRules      string `long:"out-rules" description:"scan: write a starter --overrides rules file based on what was found (regex per kind by default; --simple for exact values)"`
+	Regexp        bool   `long:"regexp" description:"--out-rules: emit regex (re:) patterns per kind (default)"`
+	Simple        bool   `long:"simple" description:"--out-rules: emit exact-value origin → replace pairs instead of regex patterns"`
+	Format        string `long:"format" description:"scan: output format — text (default) | json (metrics for dashboards)"`
+	JSON          bool   `long:"json" description:"obfuscate: parse each line as JSON (NDJSON) and obfuscate string leaves while preserving structure"`
+	AllowKeys     string `long:"allow-keys" description:"--json: skip these JSON keys (e.g. level,timestamp,msg) — values pass through unchanged"`
+	Fields        string `long:"fields" description:"--json: YAML file of dotted field paths → action (keep|mask|mask-as:KIND|remove), e.g. 'user.id: mask', 'headers.Authorization: remove'. Arrays are transparent (items.email matches every element)"`
+	Debug         int    `long:"debug" description:"debug trace verbosity on stderr, 1-10 (cumulative: 1 config/options, 4 session, 6 stages, 7 timings, 8 detector internals, 9 +caller/stack, 10 +runtime stats); off when omitted"`
+	DebugOut      string `long:"debug-out" description:"directory for binary Go artifacts at high verbosity: runtime/trace + CPU/heap pprof (read with go tool trace / pprof)"`
+	Obfuscate     struct {
+		Args struct {
+			Files []string `positional-arg-name:"FILE"`
+		} `positional-args:"yes"`
+	} `command:"obfuscate" description:"sanitize log text — replace sensitive values with plausible fakes, persist the mapping to the session file"`
+	Restore struct{} `command:"restore" description:"reverse pass — restore originals in an AI response using the session file"`
+	Show    struct{} `command:"show" description:"print the current session mapping as a TOKEN/KIND/ORIGIN/REPLACE table"`
+	Config  struct {
 		Show struct{} `command:"show" description:"print the effective merged config as YAML"`
 		Edit struct{} `command:"edit" description:"open the config file in $EDITOR"`
 		Path struct{} `command:"path" description:"print the config file paths and which are loaded"`
@@ -303,6 +309,18 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	if o.Fields != "" && !o.JSON {
 		fmt.Fprintln(os.Stderr, "warning: --fields is ignored without --json")
 	}
+
+	files, err := expandInputs(o.Obfuscate.Args.Files)
+	if err != nil {
+		return err
+	}
+	if o.InPlace && len(files) == 0 {
+		return errors.New("--in-place requires FILE arguments, e.g. obfuscate *.log")
+	}
+	if len(files) > 0 && (o.DryRun || o.Diff) {
+		return errors.New("--dry-run / --diff don't apply to multi-file obfuscation")
+	}
+
 	defer dbg.runtimeStats()
 	if o.DebugOut != "" {
 		stop, err := startProfiling(o.DebugOut)
@@ -311,18 +329,72 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 		}
 		defer stop()
 	}
-	rules, err := rulesForMode(o.Mode, o.Aggressive)
+
+	pipe, err := newObfPipeline(o, m, ov)
 	if err != nil {
 		return err
 	}
+
+	if len(files) > 0 {
+		return obfuscateBatch(o, m, pipe, files)
+	}
+
+	// Single input: stdin/-i → stdout/-o, with --dry-run / --diff.
+	raw, err := readInput(o.Input)
+	if err != nil {
+		return err
+	}
+	out, closeOut, err := openOutput(o.Output)
+	if err != nil {
+		return fmt.Errorf("output: %w", err)
+	}
+	defer closeOut()
+
+	if o.DryRun {
+		text, _ := pipe.overridePlaceholders(pipe.cutText(raw))
+		return printMatches(out, pipe.chain.Find(text))
+	}
+	result, original := pipe.apply(raw)
+	pipe.logStats()
+	if o.Diff {
+		return printDiff(out, original, result)
+	}
+	if _, err := out.Write([]byte(result)); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	if err := session.Save(o.Session, m); err != nil {
+		return fmt.Errorf("session save: %w", err)
+	}
+	dbg.at(4, "session: saved %d entries to %s", len(m.Entries()), o.Session)
+	return nil
+}
+
+// obfPipeline holds the obfuscation setup reused across one or many input
+// texts: the detector chain, the obfuscator, and the preloaded cut list and
+// field rules. Its methods run the per-text passes.
+type obfPipeline struct {
+	o      opts
+	m      *mapper.Mapper
+	chain  *detector.Chain
+	obf    *obfuscator.Obfuscator
+	ov     []overrideRule
+	cut    *cutList
+	fields jsonproc.FieldRules
+	stats  detector.FindStats
+}
+
+func newObfPipeline(o opts, m *mapper.Mapper, ov []overrideRule) (*obfPipeline, error) {
+	rules, err := rulesForMode(o.Mode, o.Aggressive)
+	if err != nil {
+		return nil, err
+	}
 	dbg.at(3, "ruleset: mode=%s → %d rules", o.Mode, len(rules))
-	chain := detector.New(rules)
-	var stats detector.FindStats
+	p := &obfPipeline{o: o, m: m, ov: ov, chain: detector.New(rules)}
 	if dbg.on(8) {
-		chain.SetStats(&stats)
+		p.chain.SetStats(&p.stats)
 	}
 	if o.Explain {
-		chain.SetExplain(func(d detector.Decision) {
+		p.chain.SetExplain(func(d detector.Decision) {
 			if d.Masked {
 				fmt.Fprintf(os.Stderr, "explain: MASK [%s] @%d %q\n", d.Kind, d.Start, d.Value)
 				return
@@ -333,80 +405,34 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 	if o.Ignore != "" {
 		il, err := detector.LoadIgnoreList(o.Ignore)
 		if err != nil {
-			return fmt.Errorf("ignore: %w", err)
+			return nil, fmt.Errorf("ignore: %w", err)
 		}
-		chain.SetIgnore(il)
+		p.chain.SetIgnore(il)
 		dbg.at(5, "ignore: loaded from %s", o.Ignore)
 	}
 	if o.Mask != "" {
 		filter, err := parseMask(o.Mask)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		chain.SetMask(filter)
+		p.chain.SetMask(filter)
 		dbg.at(3, "mask: %s → %d kinds (nil = all)", o.Mask, len(filter))
 	}
-
-	text, err := readInput(o.Input)
-	if err != nil {
-		return err
-	}
-	// Cut first: drop whole lines a pattern touches so they reach neither the
-	// detector nor the --diff baseline (originalText) below.
 	if o.Cut != "" {
-		cl, err := loadCutList(o.Cut)
+		p.cut, err = loadCutList(o.Cut)
 		if err != nil {
-			return fmt.Errorf("cut: %w", err)
+			return nil, fmt.Errorf("cut: %w", err)
 		}
-		text = cl.Apply(text)
-		dbg.at(5, "cut: applied from %s", o.Cut)
+		dbg.at(5, "cut: loaded from %s", o.Cut)
 	}
-	originalText := text
-
-	// Sed-style overrides: replace each origin with a NUL-bracketed placeholder
-	// before detection so (a) the detector cannot re-tokenize the replace value
-	// and (b) the substitution wins even when no rule would have matched origin.
-	// NUL is illegal inside JSON strings, so this pass only runs in plain-text
-	// mode; --json keeps the old SetOverrides behavior for literals.
-	var ovSlots []struct{ replace string }
-	if !o.JSON && len(ov) > 0 {
-		var literals, regexes []overrideRule
-		for _, r := range ov {
-			if r.re != nil {
-				regexes = append(regexes, r)
-			} else {
-				literals = append(literals, r)
-			}
+	if o.JSON && o.Fields != "" {
+		p.fields, err = loadFieldRules(o.Fields)
+		if err != nil {
+			return nil, fmt.Errorf("fields: %w", err)
 		}
-		// Literals first (longest origin first so a shorter one doesn't clobber
-		// an overlapping prefix) — unchanged one-to-one behavior. Regexes after,
-		// so an explicit literal wins over a pattern covering the same span.
-		sort.Slice(literals, func(i, j int) bool { return len(literals[i].literal) > len(literals[j].literal) })
-		for _, r := range literals {
-			if !strings.Contains(text, r.literal) {
-				continue
-			}
-			ph := fmt.Sprintf("\x00OVR%d\x00", len(ovSlots))
-			text = strings.ReplaceAll(text, r.literal, ph)
-			ovSlots = append(ovSlots, struct{ replace string }{r.replace})
-			m.RegisterOverride(r.literal, r.replace)
-		}
-		// Regex: every match collapses to one replace in the output, but each
-		// distinct matched value is registered separately so restore reverses
-		// the shared fake back to a real value.
-		for _, r := range regexes {
-			ph := fmt.Sprintf("\x00OVR%d\x00", len(ovSlots))
-			next, matched := replaceOutsidePlaceholders(text, r.re, ph)
-			if len(matched) == 0 {
-				continue
-			}
-			text = next
-			for _, v := range matched {
-				m.RegisterOverride(v, r.replace)
-			}
-			ovSlots = append(ovSlots, struct{ replace string }{r.replace})
-		}
-	} else if o.JSON {
+		dbg.at(5, "fields: %d rule(s) from %s", len(p.fields), o.Fields)
+	}
+	if o.JSON {
 		n := 0
 		for _, r := range ov {
 			if r.re != nil {
@@ -417,55 +443,169 @@ func runObfuscate(o opts, m *mapper.Mapper, ov []overrideRule) error {
 			fmt.Fprintf(os.Stderr, "warning: %d regex (re:) override(s) ignored in --json mode\n", n)
 		}
 	}
+	p.obf = obfuscator.New(p.chain, m)
+	return p, nil
+}
 
-	out, closeOut, err := openOutput(o.Output)
-	if err != nil {
-		return fmt.Errorf("output: %w", err)
+func (p *obfPipeline) cutText(raw string) string {
+	if p.cut == nil {
+		return raw
 	}
-	defer closeOut()
+	return p.cut.Apply(raw)
+}
 
-	if o.DryRun {
-		return printMatches(out, chain.Find(text))
+// overridePlaceholders replaces each override origin with a NUL-bracketed
+// placeholder before detection so (a) the detector can't re-tokenize the
+// replace value and (b) the substitution wins even when no rule matched. NUL is
+// illegal in JSON, so this is plain-text only; --json keeps SetOverrides for
+// literals. Returns the prepared text and the placeholder→replace slots (slot i
+// fills "\x00OVRi\x00"). Each origin is registered so restore reverses it.
+func (p *obfPipeline) overridePlaceholders(text string) (string, []string) {
+	if p.o.JSON || len(p.ov) == 0 {
+		return text, nil
 	}
-
-	obf := obfuscator.New(chain, m)
-	stage := "plain"
-	if o.JSON {
-		stage = "json"
-	}
-	dbg.at(6, "stage: detect+obfuscate (%s)", stage)
-	t0 := time.Now()
-	var result string
-	if o.JSON {
-		var fr jsonproc.FieldRules
-		if o.Fields != "" {
-			fr, err = loadFieldRules(o.Fields)
-			if err != nil {
-				return fmt.Errorf("fields: %w", err)
-			}
-			dbg.at(5, "fields: %d rule(s) from %s", len(fr), o.Fields)
+	var slots []string
+	var literals, regexes []overrideRule
+	for _, r := range p.ov {
+		if r.re != nil {
+			regexes = append(regexes, r)
+		} else {
+			literals = append(literals, r)
 		}
-		result = jsonproc.New(obf, m, splitCSV(o.AllowKeys), fr).Process(text)
+	}
+	// Literals first (longest origin first so a shorter one doesn't clobber an
+	// overlapping prefix). Regexes after, so an explicit literal wins over a
+	// pattern covering the same span.
+	sort.Slice(literals, func(i, j int) bool { return len(literals[i].literal) > len(literals[j].literal) })
+	for _, r := range literals {
+		if !strings.Contains(text, r.literal) {
+			continue
+		}
+		ph := fmt.Sprintf("\x00OVR%d\x00", len(slots))
+		text = strings.ReplaceAll(text, r.literal, ph)
+		slots = append(slots, r.replace)
+		p.m.RegisterOverride(r.literal, r.replace)
+	}
+	for _, r := range regexes {
+		ph := fmt.Sprintf("\x00OVR%d\x00", len(slots))
+		next, matched := replaceOutsidePlaceholders(text, r.re, ph)
+		if len(matched) == 0 {
+			continue
+		}
+		text = next
+		for _, v := range matched {
+			p.m.RegisterOverride(v, r.replace)
+		}
+		slots = append(slots, r.replace)
+	}
+	return text, slots
+}
+
+// apply runs the full obfuscation on raw text: cut, override placeholders,
+// detect & obfuscate (plain or JSON), then restore the placeholders. Returns
+// the obfuscated result and the post-cut original (for --diff).
+func (p *obfPipeline) apply(raw string) (result, original string) {
+	original = p.cutText(raw)
+	text, slots := p.overridePlaceholders(original)
+	dbg.at(6, "stage: detect+obfuscate")
+	t0 := time.Now()
+	if p.o.JSON {
+		result = jsonproc.New(p.obf, p.m, splitCSV(p.o.AllowKeys), p.fields).Process(text)
 	} else {
-		text = audithex.Process(text, obf)
-		result = obf.Obfuscate(text)
+		text = audithex.Process(text, p.obf)
+		result = p.obf.Obfuscate(text)
 	}
 	dbg.at(7, "timing: obfuscate %s", time.Since(t0))
+	for i, repl := range slots {
+		result = strings.ReplaceAll(result, fmt.Sprintf("\x00OVR%d\x00", i), repl)
+	}
+	return result, original
+}
+
+func (p *obfPipeline) logStats() {
 	dbg.at(8, "detector: %d rules evaluated, %d prefilter-skipped, %d candidates, %d emitted",
-		stats.RulesEvaluated, stats.PrefilterSkip, stats.Candidates, stats.Emitted)
-	for i, s := range ovSlots {
-		result = strings.ReplaceAll(result, fmt.Sprintf("\x00OVR%d\x00", i), s.replace)
+		p.stats.RulesEvaluated, p.stats.PrefilterSkip, p.stats.Candidates, p.stats.Emitted)
+}
+
+// expandInputs expands each positional argument as a shell-style glob, falling
+// back to the literal path when it matches nothing (so a typo'd filename
+// surfaces as a clear read error). The result is sorted and de-duplicated for
+// stable fake numbering across the run.
+func expandInputs(args []string) ([]string, error) {
+	var out []string
+	seen := map[string]bool{}
+	for _, a := range args {
+		matches, err := filepath.Glob(a)
+		if err != nil {
+			return nil, fmt.Errorf("bad pattern %q: %w", a, err)
+		}
+		if matches == nil {
+			matches = []string{a}
+		}
+		for _, f := range matches {
+			if !seen[f] {
+				seen[f] = true
+				out = append(out, f)
+			}
+		}
 	}
-	if o.Diff {
-		return printDiff(out, originalText, result)
+	sort.Strings(out)
+	return out, nil
+}
+
+// obfuscateBatch obfuscates each file through the shared pipeline — one session,
+// so fakes stay consistent across files. With --in-place each file is rewritten
+// (original backed up to FILE.bak); otherwise results stream to -o/stdout.
+func obfuscateBatch(o opts, m *mapper.Mapper, pipe *obfPipeline, files []string) error {
+	var out io.Writer
+	if !o.InPlace {
+		w, closeOut, err := openOutput(o.Output)
+		if err != nil {
+			return fmt.Errorf("output: %w", err)
+		}
+		defer closeOut()
+		out = w
 	}
-	if _, err := out.Write([]byte(result)); err != nil {
-		return fmt.Errorf("write output: %w", err)
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			return err
+		}
+		result, _ := pipe.apply(string(raw))
+		if o.InPlace {
+			if err := writeInPlace(f, result); err != nil {
+				return err
+			}
+			dbg.at(4, "in-place: rewrote %s (backup %s.bak)", f, f)
+		} else if _, err := out.Write([]byte(result)); err != nil {
+			return fmt.Errorf("write output: %w", err)
+		}
 	}
+	pipe.logStats()
 	if err := session.Save(o.Session, m); err != nil {
 		return fmt.Errorf("session save: %w", err)
 	}
 	dbg.at(4, "session: saved %d entries to %s", len(m.Entries()), o.Session)
+	return nil
+}
+
+// writeInPlace backs the file up to FILE.bak then overwrites it, preserving the
+// original file mode.
+func writeInPlace(path, content string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	orig, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(path+".bak", orig, info.Mode()); err != nil {
+		return fmt.Errorf("backup %s.bak: %w", path, err)
+	}
+	if err := os.WriteFile(path, []byte(content), info.Mode()); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
 	return nil
 }
 
